@@ -58,7 +58,7 @@ fun TransitionControls(effect: Transition, change: (Transition) -> Unit) {
     TransitionPreview(effect)
 }
 @Composable
-fun SlideBehaviorDialog(slide: Slide, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Slide) -> Unit, importAudio: () -> Unit) {
+fun SlideBehaviorDialog(slide: Slide, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Slide) -> Unit, importAudio: () -> Unit, actionPresets: List<Preset> = emptyList()) {
     var draft by remember(slide.id) { mutableStateOf(slide) }
     AlertDialog(onDismissRequest = dismiss, title = { Text("Audio y avance automático") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -74,6 +74,7 @@ fun SlideBehaviorDialog(slide: Slide, slides: List<Slide>, elements: List<Elemen
             if (draft.autoEnabled) {
                 SecondsField("Después de (s)", draft.autoSeconds) { draft = draft.copy(autoSeconds = it) }
                 DestinationPicker(slides, elements, draft.autoTargetId, { draft = draft.copy(autoTargetId = it) })
+                actionPresets.forEach { p -> TextButton(onClick = { draft = draft.copy(transition = p.transition) }) { Text("Usar acción: ${p.name}") } }
                 TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
             }
         }

@@ -36,10 +36,16 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
 }
 
 @Composable
-fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}) {
+fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList()) {
     var draft by remember(element.id) { mutableStateOf(element) }
+    var showStyle by remember(element.id) { mutableStateOf(false) }
+    var presetPicker by remember(element.id) { mutableStateOf<String?>(null) }
     AlertDialog(onDismissRequest = dismiss, title = { Text(when (element.kind) { "image" -> "Imagen"; "button" -> "Botón"; else -> "Cuadro de texto" }) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (element.kind == "button") {
+                if (presets.any { it.kind == "button" }) TextButton(onClick = { presetPicker = "button" }) { Text("Elegir preset de botón") }
+                if (presets.any { it.kind == "action" }) TextButton(onClick = { presetPicker = "action" }) { Text("Elegir preset de acción") }
+            }
             if (element.kind != "image") OutlinedTextField(draft.text, { draft = draft.copy(text = it) }, label = { Text("Texto") }, minLines = 2, maxLines = 5)
             else {
                 TextButton(onClick = replace) { Text("Reemplazar recurso") }
@@ -67,9 +73,28 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                 DestinationPicker(slides, elements, draft.targetId, { draft = draft.copy(targetId = it) })
                 TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
             }
+            if (element.kind != "image") {
+                Text("Editar modifica solo esta instancia.", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { showStyle = !showStyle }) { Text(if (showStyle) "Ocultar estilo" else "Estilo y presets") }
+                if (showStyle) {
+                    if (element.kind == "button") {
+                        presets.filter { it.kind == "button" }.forEach { p -> TextButton(onClick = { draft = draft.copy(textColor = p.textColor, backgroundColor = p.backgroundColor, style = p.style, presetId = p.id) }) { Text("Usar estilo: ${p.name}") } }
+                        presets.filter { it.kind == "action" }.forEach { p -> TextButton(onClick = { draft = draft.copy(transition = p.transition) }) { Text("Usar acción: ${p.name}") } }
+                        ColorPicker("Color del texto", draft.textColor) { draft = draft.copy(textColor = it) }
+                        ColorPicker("Color del cuadro", draft.backgroundColor) { draft = draft.copy(backgroundColor = it) }
+                    }
+                    StyleControls(draft.style) { draft = draft.copy(style = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f, height = draft.height.takeIf { h -> h > 0 } ?: .3f) }
+                    if (draft.style.showName) OutlinedTextField(draft.speakerName, { draft = draft.copy(speakerName = it) }, label = { Text("Nombre visible") }, singleLine = true)
+                }
+            }
+            if (draft.sourceName.isNotBlank()) Text(draft.sourceName)
         }
     }, confirmButton = { TextButton(onClick = { save(draft.copy(text = draft.text.trim())) }, enabled = draft.kind == "image" || draft.text.isNotBlank()) { Text("Guardar") } },
         dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
+    presetPicker?.let { kind -> PresetPicker(presets.filter { it.kind == kind }, if (kind == "button") "Estilo del botón" else "Acción del botón", { presetPicker = null }, { p ->
+        draft = if (kind == "button") draft.copy(textColor = p.textColor, backgroundColor = p.backgroundColor, style = p.style, presetId = p.id) else draft.copy(transition = p.transition)
+        presetPicker = null
+    }) }
 }
 
 @Composable

@@ -5,7 +5,6 @@ import android.graphics.*
 import android.graphics.drawable.AnimatedImageDrawable
 import android.graphics.drawable.Drawable
 import android.media.AudioAttributes
-import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
 import android.os.Build
 import android.view.Surface
@@ -20,9 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.contentDescription
@@ -68,20 +65,7 @@ fun LocalMedia(path: String?, options: MediaOptions, modifier: Modifier = Modifi
             options.type == "video" && active -> VideoMedia(path, options, fill, editing)
             options.type == "gif" && active -> GifMedia(path, options.loop, fill)
             options.type == "video" -> {
-                val poster by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, path) {
-                    value = withContext(Dispatchers.IO) {
-                        val retriever = MediaMetadataRetriever()
-                        try {
-                            retriever.setDataSource(path)
-                            if (Build.VERSION.SDK_INT >= 27) retriever.getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 384, 512)?.asImageBitmap()
-                            else retriever.getFrameAtTime(0)?.let { bitmap ->
-                                val result = Bitmap.createScaledBitmap(bitmap, 384, (bitmap.height * 384f / bitmap.width).toInt().coerceAtLeast(1), true)
-                                if (result !== bitmap) bitmap.recycle()
-                                result.asImageBitmap()
-                            }
-                        } catch (_: Exception) { null } finally { retriever.release() }
-                    }
-                }
+                val poster = localPoster(path)
                 poster?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = if (fill) ContentScale.Crop else ContentScale.Fit) }
             }
             else -> {

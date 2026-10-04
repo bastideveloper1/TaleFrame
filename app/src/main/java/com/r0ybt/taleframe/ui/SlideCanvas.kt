@@ -197,16 +197,13 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
     val click = if (!editing && !preview && e.kind == "button" && e.targetId != null) Modifier.clickable { navigate(e.targetId) } else Modifier
     Box(Modifier.offset { IntOffset(b.left.roundToInt(), b.top.roundToInt()) }.then(dimensions).onSizeChanged(onMeasure)
         .graphicsLayer { rotationZ = e.rotation; scaleX = if (e.flipped) -1f else 1f }
-        .testTag("element-${e.id}").semantics { contentDescription = if (e.kind == "image") "Imagen ${e.id}" else e.text }
+        .testTag("element-${e.id}").semantics { contentDescription = if (e.kind == "image") e.sourceName.ifBlank { "Imagen ${e.id}" } else e.text }
         .then(if (selected && editing) Modifier.border(2.dp, if (e.locked) Color(0xFFFFC107) else Color(0xFFC8B6FF)) else Modifier)
         .then(click)) {
         if (e.kind == "image") {
             LocalMedia(e.image, e.media, Modifier.fillMaxSize().graphicsLayer { alpha = e.opacity }, preview, editing = editing)
         } else {
-            Box(Modifier.then(if (e.width > 0 && e.height > 0) Modifier.fillMaxSize() else Modifier)
-                .graphicsLayer { alpha = e.opacity }.clip(RoundedCornerShape(if (e.kind == "button") 10.dp else 4.dp)).background(Color(e.backgroundColor)).padding(padding)) {
-                Text(e.text, color = Color(e.textColor), fontSize = font, lineHeight = font * 1.25f, overflow = TextOverflow.Ellipsis)
-            }
+            DialogueVisual(e, font, padding, Modifier.then(if (e.width > 0 && e.height > 0) Modifier.fillMaxSize() else Modifier).graphicsLayer { alpha = e.opacity })
         }
         if (selected && editing && !e.locked && e.rotation == 0f && b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }) {
             Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(Color(0xFFC8B6FF)))

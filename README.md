@@ -1,6 +1,6 @@
 # TaleFrame
 
-Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1 y 2 se migran sin borrar datos ni cambiar IDs.
+Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1, 2 y 3 se migran sin borrar datos ni cambiar IDs.
 
 ## Editor visual
 
@@ -86,9 +86,9 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Pendiente y comprobación en teléfono
 
-**Deshacer/rehacer queda pendiente.** El repositorio elimina archivos al desaparecer su última referencia. Un historial correcto necesita comandos con estados anterior/posterior, retención temporal de archivos referenciados por el historial, restauración transaccional de filas/capas/destinos y reglas de invalidación de redo. No se implementó una pila de estados que pueda recuperar filas sin sus imágenes.
+**Deshacer/rehacer queda pendiente.** El repositorio elimina archivos al desaparecer su última referencia, incluida la biblioteca del proyecto. Un historial correcto necesita comandos con estados anterior/posterior, retención temporal de archivos referenciados por el historial, restauración transaccional de filas/capas/destinos y reglas de invalidación de redo. No se implementó una pila de estados que pueda recuperar filas sin sus imágenes.
 
-El movimiento usa un dedo; las imágenes se escalan/rotan mediante propiedades o tirador, sin gestos multitáctiles. El texto no reduce automáticamente la fuente para caber. En Android 24–27 el decodificador de respaldo no corrige orientación EXIF. Personajes, presets, plantillas y funcionalidades online siguen fuera del alcance.
+El movimiento usa un dedo; las imágenes se escalan/rotan mediante propiedades o tirador, sin gestos multitáctiles. El texto no reduce automáticamente la fuente para caber. En Android 24–27 el decodificador de respaldo no corrige orientación EXIF. Plantillas completas y funcionalidades online siguen fuera del alcance; personajes y presets están disponibles desde la Iteración 4.
 
 En el teléfono conviene revisar toques y arrastres rápidos/repetidos sobre elementos pequeños y solapados, bloqueo/desbloqueo desde **Elementos**, importación de PNG/WebP transparentes, tiradores y controles en pantallas pequeñas, fondos verticales/horizontales en los tres modos, calco para alineación y reapertura de un proyecto antiguo tras instalar el APK sobre el MVP. La fluidez física y la respuesta del proveedor de archivos deben confirmarse en el dispositivo real.
 
@@ -147,3 +147,58 @@ Probar especialmente en teléfono: GIF grandes/repetición única, videos vertic
 También se instaló el APK final y se realizó `am force-stop` + reapertura con una historia temporal que incluía video de fondo, GIF, audio, slideshow, transformaciones, destinos y transiciones. Se compararon todas las filas y los bytes privados de recursos antes/después; la UI reconstruyó la composición y mostró el indicador temporal. Se restauró la base original y se retiraron los fixtures de esa comprobación. El emulador se usó sin salida de audio: los tests verifican ownership/preparación/configuración, pero la calidad del sonido y los codecs de hardware requieren teléfono físico.
 
 Archivos principales de esta iteración: `data/Models.kt`, `data/MediaOptions.kt`, `data/StoryRepository.kt`, `state/StoryViewModel.kt`, `ui/LocalMedia.kt`, `ui/Playback.kt`, `ui/MediaDialogs.kt`, `ui/EditorDialogs.kt`, `ui/SlideCanvas.kt`, `ui/TaleFrameApp.kt` y `ui/Album.kt`.
+
+
+## Iteración 4: biblioteca, personajes y estilos
+
+**Biblioteca** se abre desde el proyecto o editor. Sus categorías son Personajes, Fondos, Imágenes, GIF, Videos, Audio y Presets. Los recursos muestran nombre, preview, usos y etiqueta **Sin usar**; admiten búsqueda por nombre, importación, renombrado, uso, reemplazo y eliminación segura. Las imágenes tienen miniaturas; GIF/video muestran una imagen estática, sin reproductores ni audio. Los posters se extraen en IO, con resolución reducida y caché limitada a 8 MB. Las cuadrículas son lazy y los conteos se calculan en una pasada por las referencias del proyecto. Entrar en la biblioteca retira el lienzo activo y libera sus reproductores.
+
+**Usar** permite elegir visualmente una lámina y colocar el recurso como elemento, fondo o audio cuando corresponda. Las importaciones directas desde el editor también quedan registradas. Un recurso importado que aún no se utiliza permanece disponible en la biblioteca; borrar una instancia o lámina no elimina su entrada. Una importación parcialmente fallida de secuencia puede dejar recursos válidos **Sin usar**, para recuperarlos o borrarlos explícitamente.
+
+### Archivo, recurso e instancia
+
+El archivo privado sigue usando la deduplicación SHA-256 de Iteración 3. `resources` contiene una entrada por proyecto/ruta/tipo, con ID estable, nombre, categoría y revisión; proyectos distintos pueden compartir los mismos bytes sin compartir sus entradas de catálogo. Insertar o duplicar utiliza las rutas existentes y no vuelve a copiar archivos.
+
+La instancia conserva su ruta y ajustes visuales, además del ID de origen. **Reemplazar** en biblioteca conserva el ID y cambia el archivo para las siguientes inserciones; las instancias ya colocadas mantienen su aspecto y sus archivos. Si el reemplazo coincide con otro recurso ya registrado en el mismo proyecto/tipo, se pide reutilizar ese recurso en lugar de fusionar IDs silenciosamente. Cambiar una expresión desde el editor sí modifica expresamente la instancia seleccionada.
+
+Antes de borrar un recurso se cuentan elementos, fondos, audio, todos los frames de secuencias, expresiones y retratos. Se combinan referencias por ID y por ruta para incluir proyectos antiguos y snapshots anteriores a un reemplazo, sin contar dos veces una misma instancia. La eliminación se rechaza mientras exista cualquier uso en el proyecto. La limpieza física considera además todas las entradas de biblioteca y todas las rutas de todos los proyectos, por lo que no elimina un archivo compartido. No hay purga automática de recursos sin usar.
+
+### Personajes y expresiones
+
+Cada personaje tiene nombre, descripción opcional, retrato opcional y estilo de diálogo asociado. Al crearlo sin seleccionar un estilo, obtiene un preset propio. Sus expresiones tienen nombre, recurso de imagen y orden editable. El retrato puede omitirse: el selector utiliza la primera expresión como preview.
+
+**+ Personaje** abre personaje → expresión y crea una imagen habitual del lienzo, con metadatos de personaje/expresión. **Cambiar expresión** conserva posición, tamaño, rotación, volteo, opacidad, bloqueo y capa; también funciona sobre una instancia bloqueada. Duplicación de elemento/lámina conserva estos metadatos. Opcionalmente se pueden seleccionar varias expresiones como una secuencia de una sola capa, usando duración y repetición de Iteración 3. Los frames heredan siempre la transformación del elemento.
+
+Editar la definición o imagen de una expresión afecta las siguientes inserciones; no cambia automáticamente las escenas existentes. Borrar personaje/expresión conserva las imágenes colocadas y sus snapshots, retirando únicamente las asociaciones mediante `SET NULL`.
+
+### Diálogos, Narrador y presets
+
+**+ Diálogo** permite personaje, **Narrador**, diálogo genérico o preset independiente. La inserción aplica inmediatamente el estilo y deja el texto listo para editar. Cada proyecto tiene un Narrador propio, editable, inicialmente rectangular y semitransparente. La opción **Mostrar nombre** guarda y muestra el nombre del hablante con el diálogo.
+
+Los estilos ofrecen rectángulo, rectángulo redondeado, óvalo y círculo, familias de fuente locales, tamaño relativo, alineación, color de texto/fondo, opacidad de fondo y borde. `DialogueVisual` es el renderer común para editor, Play, miniaturas y previews de estilos. Las formas oval/círculo reservan espacio interior para el texto; el círculo se inscribe en el cuadro del elemento. El contenido que excede el área no reduce automáticamente la fuente.
+
+Los presets de diálogo y apariencia de botón guardan estilos. Los presets de acción guardan transición y duración, **sin destino**. En propiedades del botón, los selectores visuales de apariencia/acción mantienen el destino actual; los ajustes avanzados se despliegan con **Estilo y presets**. **Guardar como preset** y **Guardar acción como preset** crean una copia nombrada desde la instancia. El temporizador también permite copiar una transición desde un preset de acción.
+
+Cada inserción copia valores completos: editar la instancia no modifica el preset, y editar el preset solo afecta las próximas inserciones. El ID de preset sirve como origen, sin herencia visual dinámica. No se aplica ningún cambio masivo a escenas existentes. Un preset asociado a un personaje no puede eliminarse hasta reasignarlo; el Narrador se puede editar, pero no eliminar.
+
+### SQLite 3 → 4 y archivos principales
+
+La arquitectura sigue siendo `Compose UI → StoryViewModel → StoryRepository → SQLiteOpenHelper`; `LibraryStore` es la fachada de operaciones de catálogo del repositorio y usa su mismo escritor IO y base privada. No hay una segunda base ni caché persistente paralela.
+
+La migración aditiva crea `resources`, `characters`, `expressions` y `presets`, con índices por proyecto/personaje y un único Narrador por proyecto. Añade FKs anulables a elementos (`resource_id`, `character_id`, `expression_id`, `preset_id`) y láminas (`background_resource_id`, `audio_resource_id`). Estilos, nombre del hablante/origen y frames de expresiones se guardan en los ajustes JSON existentes. Todas las asociaciones se validan dentro del mismo proyecto.
+
+El backfill registra las rutas previas de fondos, elementos, audio y frames y crea Narradores, sin copiar ni renombrar archivos, ni reescribir ajustes antiguos. Los elementos previos usan el estilo `legacy`, manteniendo su apariencia y tamaño automático. Se conservan IDs, secuencias AUTOINCREMENT, conexiones, capas, geometría y multimedia; desde esquemas 1/2 se ejecutan primero las migraciones anteriores dentro de la misma transacción del helper.
+
+Archivos nuevos principales: `data/LibraryModels.kt`, `data/LibraryStore.kt`, `ui/LibraryScreen.kt`, `ui/LibraryDialogs.kt`, `ui/DialogueStyle.kt` y `ui/LocalPosters.kt`. Se extendieron `data/Models.kt`, `data/MediaOptions.kt`, `data/StoryRepository.kt`, `ui/TaleFrameApp.kt`, `ui/EditorDialogs.kt`, `ui/MediaDialogs.kt`, `ui/SlideCanvas.kt` y `ui/LocalMedia.kt`. El controlador de drag conserva selección inmediata, borrador en memoria y guardado al soltar. No se agregaron dependencias ni permisos; continúa sin INTERNET y con backup/transferencia deshabilitados.
+
+### Validación y límites de Iteración 4
+
+**10 pruebas unitarias y 30 pruebas Android aprobadas** en Pixel 7a / Android 17. `./gradlew test connectedDebugAndroidTest assembleDebug lint` terminó correctamente. Lint: **0 errores y 18 avisos**, de plantilla/versiones y sugerencias KTX. Se conserva la suite anterior completa.
+
+`LibraryLogicTest` cubre conteos y snapshots. `LibraryPersistenceTest` prueba migración real de esquema 3, conservación exacta de settings/IDs/rutas, referencias y borrado seguro, deduplicación, reemplazo, personajes/expresiones, cambio con geometría bloqueada, secuencias, presets, reapertura y aislamiento entre proyectos. `LibraryFlowTest` recorre la UI de creación de personaje/expresiones, inserción, drag, bloqueo, cambio de expresión, diálogo/Narrador, recreación y Play. `PresetEditorTest` verifica copia independiente de apariencia/transición y conservación del destino.
+
+Se instaló el APK final y se comprobó `am force-stop` + reapertura con una historia temporal que incluía catálogo, personaje, expresiones, estilo de diálogo, Narrador, presets de botón/acción, geometría bloqueada y multimedia anterior. Las filas completas de las siete tablas y los bytes privados permanecieron idénticos; la UI reconstruyó la escena y mostró el personaje en Biblioteca. Se restauró la base original del emulador y se retiraron todos los fixtures temporales. `git diff --check` también pasó.
+
+Límites: las expresiones usan imágenes estáticas; GIF/video se reutilizan como recursos independientes. No hay globos de habla/pensamiento, fuentes descargadas, herencia dinámica de presets, plantillas completas ni deshacer/rehacer. El tamaño de bibliotecas muy grandes y los codecs simultáneos dependen de memoria y hardware; se mantienen los límites de importación de Iteración 3.
+
+En teléfono físico conviene importar desde proveedores reales, reutilizar archivos y comprobar **Sin usar**/borrado protegido; crear varios personajes y expresiones; cambiar expresión tras mover, rotar, voltear y bloquear; comprobar nombre/Narrador y formas con textos largos; comparar edición de instancia con edición de preset; verificar que aplicar un preset no cambie el destino; abrir biblioteca con GIF/video y volver al editor; probar calco/capas, audio y cierre forzado. Instalar sobre Iteración 3 sin borrar datos y revisar historias anteriores. El emulador se ejecutó sin salida de audio: calidad de sonido y codecs reales requieren verificación física.

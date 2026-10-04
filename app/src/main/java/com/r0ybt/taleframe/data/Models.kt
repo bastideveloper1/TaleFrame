@@ -10,7 +10,8 @@ data class Slide(
     val media: MediaOptions = MediaOptions(), val audio: String? = null,
     val audioLoop: Boolean = true, val audioVolume: Float = 1f, val audioRevision: Long = 0,
     val autoEnabled: Boolean = false, val autoSeconds: Float = 5f,
-    val autoTargetId: Long? = null, val transition: Transition = Transition()
+    val autoTargetId: Long? = null, val transition: Transition = Transition(),
+    val backgroundResourceId: Long? = null, val audioResourceId: Long? = null
 )
 
 // x/y remain normalized over available travel, preserving MVP compositions.
@@ -22,9 +23,14 @@ data class Element(
     val image: String? = null, val width: Float = 0f, val height: Float = 0f,
     val rotation: Float = 0f, val flipped: Boolean = false,
     val opacity: Float = 1f, val locked: Boolean = false, val layer: Int = 0,
-    val media: MediaOptions = MediaOptions(), val transition: Transition = Transition()
+    val media: MediaOptions = MediaOptions(), val transition: Transition = Transition(),
+    val style: VisualStyle = VisualStyle(), val speakerName: String = "", val sourceName: String = "",
+    val resourceId: Long? = null, val characterId: Long? = null, val expressionId: Long? = null, val presetId: Long? = null,
+    val expressionFrames: List<Long> = emptyList()
 )
-data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList())
+data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList(),
+    val resources: List<Resource> = emptyList(), val characters: List<Character> = emptyList(),
+    val expressions: List<Expression> = emptyList(), val presets: List<Preset> = emptyList())
 fun boundedPosition(value: Float): Float = boundedValue(value, 0f, 1f, 0f)
 fun boundedValue(value: Float, min: Float, max: Float, fallback: Float): Float =
     if (value.isFinite()) value.coerceIn(min, max) else fallback

@@ -6,6 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.media.MediaMetadataRetriever
 import java.security.MessageDigest
 import java.io.File
@@ -13,8 +14,9 @@ import java.util.UUID
 
 /** SQLite stays private. All multi-row operations use transactions and stable IDs. */
 class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
-    SQLiteOpenHelper(context.applicationContext, databaseName, null, 3) {
+    SQLiteOpenHelper(context.applicationContext, databaseName, null, 4) {
     private val imageDir = File(context.filesDir, if (databaseName == "taleframe.db") "backgrounds" else "backgrounds-$databaseName").apply { mkdirs() }
+    val library = LibraryStore(this)
     private val resolver = context.contentResolver
 
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
@@ -28,6 +30,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             background_y REAL NOT NULL DEFAULT 0, background_locked INTEGER NOT NULL DEFAULT 0)""")
         createElements(db)
         addMediaColumns(db)
+        LibraryStore.createSchema(db)
         db.execSQL("CREATE INDEX slides_project ON slides(project_id)")
         db.execSQL("CREATE INDEX elements_slide ON elements(slide_id)")
     }
@@ -45,7 +48,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        require(oldVersion in 1..2 && newVersion == 3)
+        require(oldVersion in 1..3 && newVersion == 4)
         if (oldVersion == 1) {
             // SQLiteOpenHelper wraps migration in a transaction. Never drop projects/slides.
             db.execSQL("ALTER TABLE slides ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
@@ -68,7 +71,9 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             db.execSQL("INSERT INTO sqlite_sequence(name,seq) VALUES('elements',?)", arrayOf(oldSequence))
             db.execSQL("CREATE INDEX elements_slide ON elements(slide_id)")
         }
-        addMediaColumns(db)
+        if (oldVersion < 3) addMediaColumns(db)
+        LibraryStore.createSchema(db)
+        LibraryStore.backfill(db)
     }
 
     private fun addMediaColumns(db: SQLiteDatabase) {
@@ -85,19 +90,23 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         db.rawQuery("SELECT id,name FROM projects ORDER BY id", null).use { c ->
             while (c.moveToNext()) projects += Project(c.getLong(0), c.getString(1))
         }
-        db.rawQuery("SELECT id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id FROM slides ORDER BY project_id,sort_order,id", null).use { c ->
-            while (c.moveToNext()) slides += Slide(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3), c.getString(4), c.getInt(5), c.getString(6), c.getFloat(7), c.getFloat(8), c.getFloat(9), c.getInt(10) != 0).withSettings(c.getString(11), if (c.isNull(12)) null else c.getLong(12))
+        db.rawQuery("SELECT id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id,background_resource_id,audio_resource_id FROM slides ORDER BY project_id,sort_order,id", null).use { c ->
+            while (c.moveToNext()) slides += Slide(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3), c.getString(4), c.getInt(5), c.getString(6), c.getFloat(7), c.getFloat(8), c.getFloat(9), c.getInt(10) != 0).withSettings(c.getString(11), if (c.isNull(12)) null else c.getLong(12)).copy(backgroundResourceId = if(c.isNull(13)) null else c.getLong(13), audioResourceId = if(c.isNull(14)) null else c.getLong(14))
         }
-        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
-            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16)).withSettings(c.getString(17))
+        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings,resource_id,character_id,expression_id,preset_id FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
+            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16)).withSettings(c.getString(17)).copy(resourceId=if(c.isNull(18)) null else c.getLong(18),characterId=if(c.isNull(19)) null else c.getLong(19),expressionId=if(c.isNull(20)) null else c.getLong(20),presetId=if(c.isNull(21)) null else c.getLong(21))
         }
-        return Story(projects, slides, elements)
+        return library.fill(Story(projects, slides, elements))
     }
 
-    fun createProject(name: String) = writableDatabase.insertOrThrow("projects", null, ContentValues().apply { put("name", name.trim()) })
+    fun createProject(name: String): Long {
+        var id=0L
+        transaction { id=insertOrThrow("projects", null, ContentValues().apply { put("name", name.trim()) });LibraryStore.seedNarrator(this,id) }
+        return id
+    }
     fun createSlide(projectId: Long, name: String): Long = writableDatabase.insertOrThrow("slides", null, ContentValues().apply {
         put("project_id", projectId); put("name", name.trim())
-        put("sort_order", read().slides.filter { it.projectId == projectId }.maxOfOrNull { it.order }?.plus(1) ?: 0)
+        put("sort_order", readableDatabase.rawQuery("SELECT COALESCE(MAX(sort_order)+1,0) FROM slides WHERE project_id=?",arrayOf(projectId.toString())).use { it.moveToFirst();it.getInt(0) })
     })
     fun rename(table: String, id: Long, name: String) {
         require(table in listOf("projects", "slides"))
@@ -118,9 +127,14 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         }
         require(e.kind != "image" || e.image != null)
         require(e.media.type != "slideshow" || e.media.frames.isNotEmpty()) { "La secuencia necesita al menos una imagen" }
-        val layer = if (e.id == 0L) read().elements.filter { it.slideId == e.slideId }.maxOfOrNull { it.layer }?.plus(1) ?: 0 else e.layer
+        val projectId = readableDatabase.rawQuery("SELECT project_id FROM slides WHERE id=?",arrayOf(e.slideId.toString())).use { require(it.moveToFirst()) { "La lámina ya no existe" };it.getLong(0) }
+        validateLibraryReference("resources", e.resourceId, projectId)
+        validateLibraryReference("characters", e.characterId, projectId)
+        validateLibraryReference("presets", e.presetId, projectId)
+        if(e.expressionId!=null) readableDatabase.rawQuery("SELECT 1 FROM expressions WHERE id=? AND character_id=?",arrayOf(e.expressionId.toString(),e.characterId?.toString() ?: "")).use { require(it.moveToFirst()) { "La expresión debe pertenecer al personaje" } }
+        val layer = if (e.id == 0L) readableDatabase.rawQuery("SELECT COALESCE(MAX(layer_order)+1,0) FROM elements WHERE slide_id=?",arrayOf(e.slideId.toString())).use { it.moveToFirst();it.getInt(0) } else e.layer
         val values = ContentValues().apply {
-            put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
+            put("resource_id",e.resourceId);put("character_id",e.characterId);put("expression_id",e.expressionId);put("preset_id",e.presetId);put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
             put("x", boundedPosition(e.x)); put("y", boundedPosition(e.y))
             put("text_color", e.textColor); put("background_color", e.backgroundColor); put("target_id", e.targetId)
             put("image", if (e.media.type == "slideshow") e.media.frames.first() else e.image); put("width", boundedValue(e.width, 0f, 1f, 0f)); put("height", boundedValue(e.height, 0f, 1f, 0f))
@@ -150,6 +164,14 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             image = if (before.image != edited.image) edited.image else current.image,
             media = if (before.media != edited.media) edited.media else current.media,
             transition = if (before.transition != edited.transition) edited.transition else current.transition,
+            style = if (before.style != edited.style) edited.style else current.style,
+            speakerName = if (before.speakerName != edited.speakerName) edited.speakerName else current.speakerName,
+            sourceName = if (before.sourceName != edited.sourceName) edited.sourceName else current.sourceName,
+            resourceId = if (before.resourceId != edited.resourceId) edited.resourceId else current.resourceId,
+            characterId = if (before.characterId != edited.characterId) edited.characterId else current.characterId,
+            expressionId = if (before.expressionId != edited.expressionId) edited.expressionId else current.expressionId,
+            presetId = if (before.presetId != edited.presetId) edited.presetId else current.presetId,
+            expressionFrames = if (before.expressionFrames != edited.expressionFrames) edited.expressionFrames else current.expressionFrames,
             locked = if (before.locked != edited.locked) edited.locked else current.locked
         ))
     }
@@ -229,14 +251,18 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             autoSeconds = if (before.autoSeconds != edited.autoSeconds) edited.autoSeconds else current.autoSeconds,
             autoTargetId = if (before.autoTargetId != edited.autoTargetId) edited.autoTargetId else current.autoTargetId,
             transition = if (before.transition != edited.transition) edited.transition else current.transition,
+            backgroundResourceId = if (before.backgroundResourceId != edited.backgroundResourceId || (before.image != edited.image && edited.image == null)) edited.backgroundResourceId.takeIf { edited.image != null } else current.backgroundResourceId,
+            audioResourceId = if (before.audioResourceId != edited.audioResourceId || (before.audio != edited.audio && edited.audio == null)) edited.audioResourceId.takeIf { edited.audio != null } else current.audioResourceId,
             backgroundLocked = if (before.backgroundLocked != edited.backgroundLocked) edited.backgroundLocked else current.backgroundLocked
         ))
     }
     fun saveSlide(s: Slide) {
-        if (s.autoTargetId != null) require(read().slides.any { it.id == s.autoTargetId && it.projectId == s.projectId }) { "El destino debe pertenecer al proyecto" }
+        if (s.autoTargetId != null) readableDatabase.rawQuery("SELECT 1 FROM slides WHERE id=? AND project_id=?",arrayOf(s.autoTargetId.toString(),s.projectId.toString())).use { require(it.moveToFirst()) { "El destino debe pertenecer al proyecto" } }
+        validateLibraryReference("resources",s.backgroundResourceId,s.projectId)
+        validateLibraryReference("resources",s.audioResourceId,s.projectId)
         require(s.backgroundMode in listOf("fit", "fill", "manual"))
         writableDatabase.update("slides", ContentValues().apply {
-            put("settings", s.settings()); put("auto_target_id", s.autoTargetId); put("color", s.color); put("image", s.image); put("sort_order", s.order)
+            put("background_resource_id",s.backgroundResourceId.takeIf { s.image!=null });put("audio_resource_id",s.audioResourceId.takeIf { s.audio!=null });put("settings", s.settings()); put("auto_target_id", s.autoTargetId); put("color", s.color); put("image", s.image); put("sort_order", s.order)
             put("background_mode", s.backgroundMode); put("background_scale", boundedValue(s.backgroundScale, .25f, 4f, 1f))
             put("background_x", boundedValue(s.backgroundX, -1f, 1f, 0f)); put("background_y", boundedValue(s.backgroundY, -1f, 1f, 0f))
             put("background_locked", s.backgroundLocked)
@@ -244,11 +270,21 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         // Cleanup only after a complete duplicate transaction: shared references remain valid.
         if (!writableDatabase.inTransaction()) cleanImages()
     }
+    private fun validateLibraryReference(table: String, id: Long?, projectId: Long) {
+        if(id==null) return
+        readableDatabase.rawQuery("SELECT 1 FROM $table WHERE id=? AND project_id=?",arrayOf(id.toString(),projectId.toString())).use { require(it.moveToFirst()) { "El recurso narrativo debe pertenecer al proyecto" } }
+    }
     private fun transaction(action: SQLiteDatabase.() -> Unit) {
         val db = writableDatabase
         db.beginTransaction()
         try { db.action(); db.setTransactionSuccessful() } finally { db.endTransaction() }
     }
+
+    fun displayName(uri: Uri): String = try {
+        resolver.query(uri,arrayOf(OpenableColumns.DISPLAY_NAME),null,null,null)?.use {
+            if(it.moveToFirst()) it.getString(0) else null
+        } ?: uri.lastPathSegment ?: "Recurso local"
+    } catch (_:Exception) { "Recurso local" }
 
     // Private copies support transparent PNG/WebP without permanent provider permissions.
     fun importImage(uri: Uri, gif: Boolean = false): String {
@@ -323,6 +359,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     fun cleanImages() {
         val story = read()
         val used = buildSet {
+            addAll(story.resources.map { it.path })
             story.slides.forEach { s -> s.image?.let(::add); s.audio?.let(::add); addAll(s.media.frames) }
             story.elements.forEach { e -> e.image?.let(::add); addAll(e.media.frames) }
         }

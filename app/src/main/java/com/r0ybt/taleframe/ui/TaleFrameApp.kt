@@ -42,6 +42,19 @@ fun TaleFrameApp(model: StoryViewModel) {
     var nameRequest by remember { mutableStateOf<NameRequest?>(null) }
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var elementRequest by remember { mutableStateOf<Element?>(null) }
+    var showLibrary by rememberSaveable { mutableStateOf(false) }
+    var showCharacters by rememberSaveable { mutableStateOf(false) }
+    var showDialogs by rememberSaveable { mutableStateOf(false) }
+    var expressionCharacterId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var changingExpressionId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var resourceUseId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var resourceUseSlide by rememberSaveable { mutableStateOf<Long?>(null) }
+    var resourceUseMode by rememberSaveable { mutableStateOf("element") }
+    var pickerProject by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickerCategory by rememberSaveable { mutableStateOf("image") }
+    var pickerResource by rememberSaveable { mutableStateOf<Long?>(null) }
+    var savePresetElement by remember { mutableStateOf<Element?>(null) }
+    var savePresetKind by remember { mutableStateOf("dialog") }
     var showBackground by remember { mutableStateOf(false) }
     var showBehavior by remember { mutableStateOf(false) }
     var pickerElement by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -58,18 +71,28 @@ fun TaleFrameApp(model: StoryViewModel) {
         val kind = pickerKind
         val type = pickerType
         val elementId = pickerElement
-        if (uri != null && id != null) model.edit {
+        val importingProject = pickerProject
+        val resourceId = pickerResource
+        val category = pickerCategory
+        if (uri != null && importingProject != null && kind in listOf("library", "libraryReplace")) model.edit {
+            if (read().projects.any { it.id == importingProject }) {
+                if (kind == "libraryReplace" && resourceId != null) library.replaceResource(resourceId, uri)
+                else library.importResource(importingProject, uri, displayName(uri), type, category)
+            }
+        }
+        else if (uri != null && id != null) model.edit {
             val current = read().slides.find { it.id == id }
             if (current != null) {
                 val path = importMedia(uri, type)
+                val resource = library.addResource(current.projectId, displayName(uri), type, if (kind == "background") "background" else type, path)
                 when (kind) {
-                    "background" -> saveSlide(current.copy(image = path, media = MediaOptions(type = type, revision = current.media.revision + 1)))
-                    "audio" -> saveSlide(current.copy(audio = path, audioRevision = current.audioRevision + 1))
+                    "background" -> saveSlide(current.copy(image = path, backgroundResourceId = resource, media = MediaOptions(type = type, revision = current.media.revision + 1)))
+                    "audio" -> saveSlide(current.copy(audio = path, audioResourceId = resource, audioRevision = current.audioRevision + 1))
                     "replace" -> {
                         val element = read().elements.find { it.id == elementId }
-                        if (element != null) saveElement(element.copy(image = path, media = MediaOptions(type = type, revision = element.media.revision + 1))) else cleanImages()
+                        if (element != null) saveElement(element.copy(image = path, resourceId = resource, characterId = null, expressionId = null, expressionFrames = emptyList(), sourceName = "", media = MediaOptions(type = type, revision = element.media.revision + 1))) else cleanImages()
                     }
-                    else -> saveElement(Element(0, id, "image", "", image = path, width = .4f, height = .4f, media = MediaOptions(type = type)))
+                    else -> saveElement(Element(0, id, "image", "", image = path, width = .4f, height = .4f, resourceId = resource, media = MediaOptions(type = type)))
                 }
             }
         }
@@ -78,16 +101,24 @@ fun TaleFrameApp(model: StoryViewModel) {
         pickerSlide = slideId; pickerKind = kind; pickerType = type; pickerElement = element
         imagePicker.launch(when (type) { "video" -> arrayOf("video/*"); "audio" -> arrayOf("audio/*"); "gif" -> arrayOf("image/gif"); else -> arrayOf("image/png", "image/webp", "image/jpeg") })
     }
+    fun importLibrary(type: String, category: String, resource: Resource? = null) {
+        pickerProject = projectId; pickerCategory = category; pickerResource = resource?.id
+        pickerType = type; pickerKind = if (resource == null) "library" else "libraryReplace"
+        imagePicker.launch(when(type) { "video" -> arrayOf("video/*"); "audio" -> arrayOf("audio/*"); "gif" -> arrayOf("image/gif"); else -> arrayOf("image/png", "image/webp", "image/jpeg") })
+    }
     val sequencePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val id = pickerSlide; val elementId = pickerElement
         if (uris.isNotEmpty() && id != null) model.edit {
             val existing = read().elements.find { it.id == elementId && it.slideId == id }
             if (read().slides.any { it.id == id }) {
                 try {
-                    val paths = uris.map { importImage(it) }
+                    val project = read().slides.first { it.id == id }.projectId
+                    val paths = uris.map { uri ->
+                        val path = importImage(uri); library.addResource(project, displayName(uri), "image", "image", path); path
+                    }
                     val frames = if (existing == null) paths else (existing.media.frames.ifEmpty { listOfNotNull(existing.image) } + paths)
                     val element = existing ?: Element(0, id, "image", "", width = .4f, height = .4f)
-                    saveElement(element.copy(image = frames.first(), media = element.media.copy(type = "slideshow", frames = frames)))
+                    saveElement(element.copy(image = frames.first(), resourceId = read().resources.firstOrNull { it.projectId == project && it.path == frames.first() }?.id, media = element.media.copy(type = "slideshow", frames = frames)))
                 } catch (e: Exception) { cleanImages(); throw e }
             }
         }
@@ -97,7 +128,7 @@ fun TaleFrameApp(model: StoryViewModel) {
         sequencePicker.launch(arrayOf("image/png", "image/webp", "image/jpeg"))
     }
     fun back() {
-        when { playing -> playing = false; slideId != null -> slideId = null; else -> projectId = null }
+        when { playing -> playing = false; showLibrary -> showLibrary = false; slideId != null -> slideId = null; else -> projectId = null }
     }
     fun play() { playSlideId = slides.minByOrNull { it.id }?.id; playing = playSlideId != null }
     BackHandler(projectId != null || playing) { back() }
@@ -109,8 +140,9 @@ fun TaleFrameApp(model: StoryViewModel) {
         } else Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                 if (projectId != null) TextButton(onClick = { back() }) { Text("‹ Volver") }
-                Text(slide?.name ?: project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge,
+                Text(if (showLibrary) "Biblioteca · ${project?.name ?: ""}" else slide?.name ?: project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1)
+                if (project != null && !showLibrary) TextButton(onClick = { showLibrary = true }) { Text("Biblioteca") }
                 if (slides.isNotEmpty()) TextButton(onClick = { play() }) { Text("▶ Play") }
             }
             if (!ready) Text("Abriendo proyectos…", Modifier.padding(24.dp))
@@ -132,6 +164,13 @@ fun TaleFrameApp(model: StoryViewModel) {
                         }
                     }
                 }
+            } else if (showLibrary) {
+                LibraryScreen(story, requireNotNull(projectId), Modifier.weight(1f), edit = model::edit,
+                    import = { type, category -> importLibrary(type, category) },
+                    replace = { r -> importLibrary(r.type, r.category, r) }, use = { r ->
+                        resourceUseId = r.id; resourceUseSlide = slideId
+                        resourceUseMode = if (r.type == "audio") "audio" else if (r.category == "background") "background" else "element"
+                    })
             } else if (slide == null) {
                 Text("Álbum de láminas", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -160,6 +199,11 @@ fun TaleFrameApp(model: StoryViewModel) {
                     if (selected == null) Text(if (movingBackground) "Arrastra el fondo manual" else "Toca para seleccionar · arrastra para mover", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
                     else {
                         TextButton(onClick = { elementRequest = selected }) { Text("Editar") }
+                        if (selected.kind == "image" && selected.characterId != null) TextButton(onClick = { changingExpressionId = selected.id; expressionCharacterId = selected.characterId }) { Text("Cambiar expresión") }
+                        if (selected.kind in listOf("text", "button")) {
+                            TextButton(onClick = { savePresetElement = selected; savePresetKind = if (selected.kind == "button") "button" else "dialog" }) { Text("Guardar como preset") }
+                            if (selected.kind == "button") TextButton(onClick = { savePresetElement = selected; savePresetKind = "action" }) { Text("Guardar acción como preset") }
+                        }
                         TextButton(onClick = { model.edit { toggleLock(selected.id) } }) { Text(if (selected.locked) "Desbloquear" else "Bloquear") }
                         TextButton(onClick = { model.edit { duplicateElement(selected.id) } }) { Text("Duplicar") }
                         TextButton(onClick = { model.edit { layer(selected.id, true) } }) { Text("Al frente") }
@@ -169,6 +213,8 @@ fun TaleFrameApp(model: StoryViewModel) {
                 }
                 Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = { showBackground = true }) { Text("Fondo") }
+                    TextButton(onClick = { showCharacters = true }) { Text("+ Personaje") }
+                    TextButton(onClick = { showDialogs = true }) { Text("+ Diálogo") }
                     TextButton(onClick = { elementRequest = Element(0, slide.id, "text", "", y = .15f, width = .6f, height = .18f) }) { Text("+ Texto") }
                     TextButton(onClick = { elementRequest = Element(0, slide.id, "button", "", x = .1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,
                         y = .7f, backgroundColor = 0xFF6750A4.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
@@ -191,7 +237,7 @@ fun TaleFrameApp(model: StoryViewModel) {
             AlertDialog(onDismissRequest = { nameRequest = null }, title = { Text("Elementos · arriba primero") }, text = {
                 LazyColumn(Modifier.heightIn(max = 400.dp)) {
                     items(story.elements.filter { it.slideId == slideId }.sortedByDescending { it.layer }, key = { it.id }) { e ->
-                        TextButton(onClick = { selectedId = e.id; nameRequest = null }) { Text("${if (e.locked) "🔒 " else ""}${if (e.kind == "image") "Imagen ${e.id}" else e.text}") }
+                        TextButton(onClick = { selectedId = e.id; nameRequest = null }) { Text("${if (e.locked) "🔒 " else ""}${if (e.kind == "image") e.sourceName.ifBlank { "Imagen ${e.id}" } else e.text}") }
                     }
                 }
             }, confirmButton = { TextButton(onClick = { nameRequest = null }) { Text("Cerrar") } })
@@ -208,18 +254,56 @@ fun TaleFrameApp(model: StoryViewModel) {
     }
     elementRequest?.let { e -> ElementDialog(e, slides, story.elements, { elementRequest = null }, { updated -> model.edit { editElement(e, updated) }; elementRequest = null },
         replace = { elementRequest = null; importImage("replace", e.media.type.takeIf { it != "slideshow" } ?: "image", e.id) },
-        addFrames = { importSequence(e.id) }) }
+        addFrames = { importSequence(e.id) }, presets = story.presets.filter { it.projectId == projectId }) }
     if (showBackground && slide != null) BackgroundDialog(slide, { showBackground = false },
         save = { s -> model.edit { editBackground(slide, s) }; showBackground = false }, import = { showBackground = false; importImage("background") },
         importGif = { showBackground = false; importImage("background", "gif") },
         importVideo = { showBackground = false; importImage("background", "video") })
     if (showBehavior && slide != null) SlideBehaviorDialog(slide, slides, story.elements, { showBehavior = false },
         save = { updated -> model.edit { editBackground(slide, updated) }; showBehavior = false },
-        importAudio = { showBehavior = false; importImage("audio", "audio") })
+        importAudio = { showBehavior = false; importImage("audio", "audio") }, actionPresets = story.presets.filter { it.projectId == projectId && it.kind == "action" })
     if (showReference && slide != null) CalcoDialog(slides.filter { it.id != slide.id }, story.elements, referenceId, referenceOpacity,
         { showReference = false }, { id, opacity ->
             referenceId = id; referenceOpacity = opacity; showReference = false
             preferences.edit { putLong("calco_slide_$slideId", id ?: 0); putFloat("calco_opacity_$slideId", opacity) }
         })
+    if (showCharacters && projectId != null) CharacterPicker(story, requireNotNull(projectId), { showCharacters = false }, { c ->
+        showCharacters = false; expressionCharacterId = c.id; changingExpressionId = null
+    })
+    story.characters.find { it.id == expressionCharacterId }?.let { c ->
+        ExpressionPicker(c, story.expressions.filter { it.characterId == c.id }, story.resources.filter { it.projectId == c.projectId },
+            { expressionCharacterId = null; changingExpressionId = null }, { ids ->
+                val changing = changingExpressionId; val currentSlide = slideId
+                if (changing != null) model.edit { library.changeExpression(changing, ids.first()) }
+                else if (currentSlide != null) model.edit { library.insertCharacter(currentSlide, ids) }
+                expressionCharacterId = null; changingExpressionId = null
+            }, allowSequence = changingExpressionId == null)
+    }
+    if (showDialogs && projectId != null) DialogPicker(story, requireNotNull(projectId), { showDialogs = false }, { character, preset ->
+        val currentSlide = slideId
+        if (currentSlide != null) model.edit { library.insertDialog(currentSlide, character, preset) }
+        showDialogs = false
+    })
+    story.resources.find { it.id == resourceUseId }?.let { r ->
+        AlertDialog(onDismissRequest = { resourceUseId = null }, title = { Text("Usar ${r.name}") }, text = {
+            Column {
+                if (r.type != "audio") Row {
+                    FilterChip(resourceUseMode == "element", { resourceUseMode = "element" }, label = { Text("Elemento") })
+                    FilterChip(resourceUseMode == "background", { resourceUseMode = "background" }, label = { Text("Fondo") })
+                } else Text("Audio de la lámina")
+                DestinationPicker(slides, story.elements, resourceUseSlide, { resourceUseSlide = it })
+            }
+        }, confirmButton = { TextButton(onClick = {
+            val destination = resourceUseSlide; val mode = resourceUseMode
+            if (destination != null) model.edit { library.insertResource(destination, r.id, mode) }
+            resourceUseId = null; showLibrary = false
+            if (destination != null) slideId = destination
+        }, enabled = resourceUseSlide != null) { Text("Usar en lámina") } }, dismissButton = { TextButton(onClick = { resourceUseId = null }) { Text("Cancelar") } })
+    }
+    savePresetElement?.let { element -> NameDialog("Guardar preset", "", { savePresetElement = null }, { name ->
+        val project = projectId; val kind = savePresetKind
+        if (project != null) model.edit { library.savePreset(Preset(0, project, name, kind, element.textColor, element.backgroundColor, element.style, element.transition)) }
+        savePresetElement = null
+    }) }
     error?.let { message -> AlertDialog(onDismissRequest = { model.clearError() }, title = { Text("No se pudo completar el cambio") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { model.clearError() }) { Text("Aceptar") } }) }
 }
