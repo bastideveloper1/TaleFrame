@@ -1,6 +1,6 @@
 # TaleFrame
 
-Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1, 2 y 3 se migran sin borrar datos ni cambiar IDs.
+Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1–4 se migran sin borrar datos ni cambiar IDs.
 
 ## Editor visual
 
@@ -23,7 +23,7 @@ Editor Android privado y offline de historietas interactivas por láminas. Kotli
 - Al abrir un proyecto aparece el **Álbum de láminas**, con miniaturas de la composición completa.
 - **Grande**, **Mediana** y **Pequeña** muestran 1, 2 o 3 columnas. La preferencia queda guardada en el dispositivo.
 - Cada tarjeta muestra los números visuales de sus destinos y el avance automático; **FIN** indica que no contiene botones ni avance automático. Un botón sin destino se indica mediante `?` o `Sin destino`.
-- **Opciones → Mover antes/Mover después** cambia el orden visual. Las conexiones usan IDs estables. El punto de entrada del MVP se conserva: Play comienza en la primera lámina creada que aún exista (menor ID), marcada **Inicio**, aunque se reordene el álbum.
+- **Opciones → Mover antes/Mover después** cambia el orden visual. Las conexiones usan IDs estables. El punto de entrada del MVP se conserva: Sin configuración explícita, Play comienza en la primera lámina creada que aún exista (menor ID), marcada **Inicio**, aunque se reordene el álbum. Desde Iteración 5 se puede establecer otra lámina inicial.
 - **Duplicar lámina** inserta una copia a continuación de la original, con toda su composición. Los botones copiados **conservan exactamente sus IDs de destino**, incluso si apuntaban a la propia original. No se redirigen a la copia automáticamente.
 - Al editar un botón, el selector de destino muestra tarjetas con miniaturas y nombres.
 - **Ver acciones** añade etiquetas temporales de destino sobre los botones del editor. Nunca aparece en Play.
@@ -88,7 +88,7 @@ APK: `app/build/outputs/apk/debug/app-debug.apk`.
 
 **Deshacer/rehacer queda pendiente.** El repositorio elimina archivos al desaparecer su última referencia, incluida la biblioteca del proyecto. Un historial correcto necesita comandos con estados anterior/posterior, retención temporal de archivos referenciados por el historial, restauración transaccional de filas/capas/destinos y reglas de invalidación de redo. No se implementó una pila de estados que pueda recuperar filas sin sus imágenes.
 
-El movimiento usa un dedo; las imágenes se escalan/rotan mediante propiedades o tirador, sin gestos multitáctiles. El texto no reduce automáticamente la fuente para caber. En Android 24–27 el decodificador de respaldo no corrige orientación EXIF. Plantillas completas y funcionalidades online siguen fuera del alcance; personajes y presets están disponibles desde la Iteración 4.
+El movimiento usa un dedo; las imágenes se escalan/rotan mediante propiedades o tirador, sin gestos multitáctiles. El texto no reduce automáticamente la fuente para caber. En Android 24–27 el decodificador de respaldo no corrige orientación EXIF. Las funcionalidades online siguen fuera del alcance; personajes/presets están disponibles desde Iteración 4 y plantillas editables desde Iteración 5.
 
 En el teléfono conviene revisar toques y arrastres rápidos/repetidos sobre elementos pequeños y solapados, bloqueo/desbloqueo desde **Elementos**, importación de PNG/WebP transparentes, tiradores y controles en pantallas pequeñas, fondos verticales/horizontales en los tres modos, calco para alineación y reapertura de un proyecto antiguo tras instalar el APK sobre el MVP. La fluidez física y la respuesta del proveedor de archivos deben confirmarse en el dispositivo real.
 
@@ -202,3 +202,68 @@ Se instaló el APK final y se comprobó `am force-stop` + reapertura con una his
 Límites: las expresiones usan imágenes estáticas; GIF/video se reutilizan como recursos independientes. No hay globos de habla/pensamiento, fuentes descargadas, herencia dinámica de presets, plantillas completas ni deshacer/rehacer. El tamaño de bibliotecas muy grandes y los codecs simultáneos dependen de memoria y hardware; se mantienen los límites de importación de Iteración 3.
 
 En teléfono físico conviene importar desde proveedores reales, reutilizar archivos y comprobar **Sin usar**/borrado protegido; crear varios personajes y expresiones; cambiar expresión tras mover, rotar, voltear y bloquear; comprobar nombre/Narrador y formas con textos largos; comparar edición de instancia con edición de preset; verificar que aplicar un preset no cambie el destino; abrir biblioteca con GIF/video y volver al editor; probar calco/capas, audio y cierre forzado. Instalar sobre Iteración 3 sin borrar datos y revisar historias anteriores. El emulador se ejecutó sin salida de audio: calidad de sonido y codecs reales requieren verificación física.
+
+
+## Iteración 5: composición y presentación
+
+### Identidad y entrada del proyecto
+
+La interfaz utiliza superficies blanco rosado/gris cálido y un acento rosa empolvado de contraste alto, con tarjetas y diálogos de esquinas coherentes. El tema oscuro usa carbón, superficies gris cálido oscuro y rosa desaturado. **Tema** en la lista de proyectos permite **Seguir sistema / Rosa claro / Oscuro**, con preferencia local y barras del sistema adaptadas. Los colores de las composiciones y presets existentes no se sustituyen al cambiar el tema de la aplicación.
+
+Las tarjetas de proyecto tienen portada, nombre y cantidad de láminas. Sin portada muestran un placeholder TaleFrame. **Cambiar portada** en la entrada del proyecto selecciona una imagen de su Biblioteca, permite reemplazarla o quitarla. La portada es una asociación al recurso: sigue su archivo actual si ese recurso se reemplaza en Biblioteca. Su referencia impide eliminar el recurso mientras esté asociada.
+
+La entrada se integra con el Álbum, sin una pantalla adicional: muestra portada, cantidad de láminas/borradores e inicio, y ofrece **Continuar edición**, **Reproducir desde inicio**, Personajes, Presets y Plantillas; Biblioteca permanece accesible en la cabecera. Continuar recupera la última lámina abierta desde el Álbum, con preferencia local por proyecto. **Reproducir desde esta lámina** está en la toolbar del editor; el Play de su cabecera también inicia en la lámina actual. Play desde el Álbum/Biblioteca inicia en el inicio del proyecto. **Salir de reproducción** y Back regresan al editor/Álbum.
+
+### Inicio, borradores y conexiones
+
+**Opciones → Establecer como lámina inicial** guarda un ID estable; el Álbum marca **Inicio**. Si no se define, o se elimina la inicial, se conserva el criterio histórico del menor ID. Cambiar orden visual no modifica la entrada.
+
+**Marcar borrador / Marcar completa** se ofrece en Opciones y en el editor. Los borradores siguen siendo totalmente editables. **Omitir láminas en borrador** es una preferencia del proyecto. Si la inicial está omitida, se empieza por la primera lámina no borrador por ID; la entrada del proyecto muestra explícitamente ese inicio efectivo. Si todas están omitidas, se muestra un aviso y no se abre Play. La prueba desde una escena actual omitida también avisa; desactivar la opción permite reproducirla.
+
+Un botón o temporizador dirigido a un borrador omitido muestra **Destino en borrador** y mantiene la escena actual. No redirige hacia otra lámina ni sigue conexiones por su cuenta. Se puede cerrar el aviso, elegir otra acción o salir. La acción bloqueada no consume la puerta de salida de la visita; el temporizador no reintenta continuamente. Los destinos guardados no se alteran al omitir borradores. **FIN** sigue identificando escenas sin botones ni autoavance; un botón sin destino se marca como tal.
+
+### Plantillas editables
+
+**Nueva lámina** ofrece **Vacía** y previews de plantillas incluidas/propias. Hay seis bases: Lámina completa, 2 verticales, 2 horizontales, 3 paneles, 4 paneles y Conversación. Las incluidas tienen IDs negativos reservados y se generan localmente; no tienen archivos externos ni filas copiadas a cada proyecto. Se distinguen de las plantillas del usuario y no se pueden renombrar/eliminar; **Duplicar plantilla** crea una copia propia editable en su administración.
+
+**Guardar como plantilla** en el editor toma un snapshot de fondo, audio, geometría, capas, textos, estilos, imágenes, personajes, expresiones, paneles y multimedia. La plantilla pertenece al proyecto y no cambia cuando se edita/elimina la lámina original. Su preview usa el lienzo común en modo estático. Biblioteca → Plantillas permite crear una composición, guardar desde su editor, renombrar, duplicar, eliminar y aplicar en una **nueva** lámina; no sobrescribe composiciones existentes.
+
+La aplicación crea lámina y elementos con IDs nuevos dentro de una transacción. Reutiliza rutas privadas; no copia archivos. Mantiene metadatos de personaje/expresión/preset si sus definiciones todavía existen. Si se eliminaron, retira la asociación conservando los nombres, imágenes y estilos del snapshot.
+
+Las plantillas guardan composición/apariencia: no almacenan destinos de botones ni destino de autoavance. Al aplicar, los botones quedan **Sin destino** y el temporizador desactivado, con duración/transición disponibles para configurarlos. La nueva escena no hereda el estado Borrador ni se vuelve inicial automáticamente. **Duplicar lámina**, como antes, sí conserva destinos y estado de la lámina: se distingue de aplicar una plantilla.
+
+Todas las rutas de plantillas, incluidos fondo, audio y frames, participan en la limpieza física. Sus IDs/rutas participan en los conteos de Biblioteca. Se protege el archivo anterior si un recurso se reemplaza después de guardar una plantilla. Eliminar una plantilla no elimina sus láminas derivadas.
+
+### Paneles y encuadre
+
+Un panel es un elemento `image` con opciones de encuadre en JSON; no necesita un nuevo tipo SQL ni reconstruir la tabla estable de elementos. Puede existir vacío. **+ Panel** crea uno independiente, y las plantillas incluidas usan estos mismos elementos. Selección inmediata, drag, tamaño, rotación, volteo, opacidad, bloqueo, capas, duplicación y eliminación utilizan el controlador existente.
+
+**Editar** permite asignar imagen por importación o desde Biblioteca, vaciar el panel y elegir **Fit / Fill / Manual**. Manual parte de Fill y ofrece escala y posición interior horizontal/vertical. Los cambios de encuadre no mueven el panel: el contenido se recorta a su área. Las transformaciones externas mueven/rotan el panel completo. Los paneles son independientes; no imponen una cuadrícula rígida después de aplicar la plantilla. La asignación desde Biblioteca usa imágenes estáticas; la importación/reemplazo multimedia sigue el soporte anterior del elemento.
+
+### Texto, selección y botones
+
+Se añaden **Diálogo** (bocadillo con cola sencilla fija) y **Pensamiento** (óvalo con burbujas), redimensionables y compatibles con colores, Narrador/personajes y presets. Los controles comunes incorporan negrita/cursiva, manteniendo las fuentes locales, tamaño relativo y alineación existentes. El contenido se recorta/abrevia al exceder el cuadro: **Texto no cabe** aparece solo en editor, sin modificar automáticamente el tamaño elegido. No aparece en Play ni miniaturas.
+
+Los botones muestran presión mediante una reducción moderada de escala/opacidad. El preset/instancia permite **Sin efecto / Brillo suave / Pulso suave**, por defecto desactivado. El pulso solo se anima en reproducción activa; no corre en álbum, biblioteca, calco o transiciones. Las previews muestran forma, colores, fuente y brillo del preset, usando su nombre como texto de botón.
+
+La selección usa el acento del tema y distingue bloqueo con un indicador discreto. Las guías de centro/bordes aparecen temporalmente durante el borrador de drag; no hacen snap ni escriben SQLite. La toolbar conserva dos filas de altura fija: **Herramientas** reduce la fila a controles de capas/reproducción y permite recuperar las acciones; sus descripciones accesibles indican reducir/mostrar. Cambiar selección no altera la altura ni cancela gestos. Las paletas de color tienen controles de 48 dp; las filas y diálogos ofrecen scroll para pantallas pequeñas.
+
+### SQLite 4 → 5 y arquitectura
+
+Se conserva `Compose UI → StoryViewModel → StoryRepository → SQLiteOpenHelper`. `TemplateStore` comparte repositorio y cola IO con `LibraryStore`. `TemplateCodec` guarda un cuerpo JSON autocontenido con propiedades visuales, rutas y IDs de origen; no serializa objetos Android ni almacena bitmaps.
+
+La migración aditiva añade a `projects` `cover_resource_id` y `initial_slide_id` (FK con `ON DELETE SET NULL`) y `skip_drafts` (0 por defecto); añade `draft` a `slides` (0) y crea `templates(id,project_id,name,body)` con índice por proyecto y eliminación en cascada. Paneles, negrita/cursiva y efecto de botón amplían los JSON existentes, con defaults que conservan estilos previos. No se reconstruyen tablas ni se reescriben settings de historias anteriores. Desde v1/v2/v3 se ejecutan primero las migraciones existentes, incluyendo Biblioteca, y después v5. Se validan portadas, entrada y aplicación dentro del mismo proyecto.
+
+Archivos nuevos: `data/TemplateStore.kt`, `ui/TemplateDialogs.kt`, `ui/PanelVisual.kt` y `ui/ProjectEntry.kt`. Integraciones principales: `Models`, `MediaOptions`, `LibraryModels`, `StoryRepository`, `TaleFrameApp`, `Album`, `LibraryScreen`, `LibraryDialogs`, `EditorDialogs`, `DialogueStyle`, `SlideCanvas`, `Playback` y `theme/Theme.kt`.
+
+### Validación y comprobación física
+
+**13 pruebas unitarias y 40 pruebas Android aprobadas** en Pixel 7a / Android 17. `./gradlew test connectedDebugAndroidTest assembleDebug lint` completó correctamente; lint: **0 errores y 19 avisos** (plantilla/versiones y sugerencias KTX). `git diff --check` pasó. Se mantuvieron todos los casos anteriores; el selector de volver en `LibraryFlowTest` se actualizó a la descripción accesible del control compacto, sin retirar sus comprobaciones de datos/gestos.
+
+Se instaló el APK definitivo y se comprobó cierre real con `am force-stop` + reapertura: las ocho tablas completas y los bytes de los recursos privados permanecieron idénticos, incluyendo portada, inicio explícito, borradores, plantillas, paneles, formas/negrita/cursiva y multimedia previa. Se revisaron los temas claro/oscuro a 360 dp de ancho (720×1280, 320 dpi). Se restauraron la base y preferencias originales, retirando los fixtures temporales; el emulador no tuvo salida de audio.
+
+Las pruebas nuevas cubren migración real v4 conservando cada columna previa e IDs/secuencias; portada/entrada/borradores; snapshot/aplicación de plantillas; archivos retenidos después de borrar escenas/reemplazar recursos; metadatos eliminados; layouts y duplicaciones; destinos bloqueados por botón/temporizador; overflow sin reducción de fuente; creación visual, portada, panel desde Biblioteca, guardado/reutilización de plantilla y toolbar tras recreación.
+
+Límites: no hay cola de bocadillo libre, texto enriquecido por fragmentos, autoajuste de fuente, paneles vinculados entre sí ni reflujo automático del layout. Las guías son aproximadas y no hacen snap. Las plantillas se aplican en nuevas láminas del mismo proyecto; no hay importación/exportación ni actualización dinámica de sus instancias. Siguen pendientes deshacer/rehacer y verificación física de Android 24–27/codecs, grandes bibliotecas y mezcla real de sonido.
+
+En teléfono físico revisar tema claro/oscuro y cambio del sistema, contraste y tamaño de fuente del dispositivo; scroll de toolbar y diálogos en pantallas pequeñas; encuadre de imágenes verticales/horizontales/transparencia en paneles; drag rápido, bloqueo y guías; overflow en bocadillos; presión/pulso de botones; portada y recursos retenidos por plantillas; reproducción desde inicio/actual con conexiones a borradores; cierre forzado y actualización sobre Iteración 4 sin borrar datos. No se añadieron permisos ni dependencias: continúa sin INTERNET, con recursos locales y backup/transferencia deshabilitados.

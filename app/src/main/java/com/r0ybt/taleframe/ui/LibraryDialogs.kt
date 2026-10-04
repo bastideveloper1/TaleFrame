@@ -1,5 +1,6 @@
 package com.r0ybt.taleframe.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
@@ -30,7 +31,10 @@ fun ResourcePreview(resource: Resource?, modifier: Modifier = Modifier) {
 @Composable
 fun PresetPreview(p: Preset, modifier: Modifier = Modifier) {
     if(p.kind=="action") Column(modifier.padding(8.dp)) { Text(p.name);Text("${p.transition.type} · ${p.transition.duration} ms") }
-    else DialogueVisual(styledElement(0,p,if(p.style.showName) "Personaje" else "").copy(text="Texto de ejemplo"),16.sp,8.dp,modifier)
+    else Box(modifier) {
+        DialogueVisual(styledElement(0,p,if(p.style.showName) "Personaje" else "").copy(text=if(p.kind=="button") p.name else "Texto de ejemplo"),16.sp,8.dp,Modifier.fillMaxSize())
+        if(p.kind=="button" && p.style.buttonEffect=="glow") Box(Modifier.matchParentSize().border(3.dp,androidx.compose.ui.graphics.Color(p.textColor).copy(alpha=.25f),androidx.compose.foundation.shape.RoundedCornerShape(12.dp)))
+    }
 }
 @Composable
 fun ResourcePicker(resources: List<Resource>, title: String, dismiss: () -> Unit, choose: (Resource?) -> Unit, allowNone: Boolean = false) {
@@ -47,10 +51,10 @@ fun ResourcePicker(resources: List<Resource>, title: String, dismiss: () -> Unit
     } },confirmButton={TextButton(onClick=dismiss){Text("Cancelar")}})
 }
 @Composable
-fun StyleControls(style: VisualStyle, change: (VisualStyle) -> Unit) {
+fun StyleControls(style: VisualStyle, button:Boolean=false, change: (VisualStyle) -> Unit) {
     Text("Forma")
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-        listOf("rectangle" to "Rectángulo","rounded" to "Redondeado","oval" to "Óvalo","circle" to "Círculo").forEach { (key,label) -> FilterChip(style.shape==key,{change(style.copy(shape=key))},label={Text(label)}) }
+        listOf("rectangle" to "Rectángulo","rounded" to "Redondeado","oval" to "Óvalo","circle" to "Círculo","speech" to "Diálogo","thought" to "Pensamiento").forEach { (key,label) -> FilterChip(style.shape==key,{change(style.copy(shape=key))},label={Text(label)}) }
     }
     Text("Fuente")
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
@@ -60,6 +64,16 @@ fun StyleControls(style: VisualStyle, change: (VisualStyle) -> Unit) {
     Slider(style.textScale,{change(style.copy(textScale=it))},valueRange=.5f..2f)
     Row(horizontalArrangement=Arrangement.spacedBy(4.dp)) {
         listOf("start" to "Izquierda","center" to "Centro","end" to "Derecha").forEach { (key,label) -> FilterChip(style.alignment==key,{change(style.copy(alignment=key))},label={Text(label)}) }
+    }
+    Row(Modifier.horizontalScroll(rememberScrollState())) {
+        FilterChip(style.bold,{change(style.copy(bold=!style.bold))},label={Text("Negrita")})
+        FilterChip(style.italic,{change(style.copy(italic=!style.italic))},label={Text("Cursiva")})
+    }
+    if(button) {
+    Text("Efecto de botón (solo en reproducción)")
+    Row(Modifier.horizontalScroll(rememberScrollState())) {
+        listOf("none" to "Sin efecto","glow" to "Brillo suave","pulse" to "Pulso suave").forEach {(key,label)->FilterChip(style.buttonEffect==key,{change(style.copy(buttonEffect=key))},label={Text(label)})}
+    }
     }
     Text("Opacidad del fondo: ${(style.backgroundOpacity*100).toInt()} %")
     Slider(style.backgroundOpacity,{change(style.copy(backgroundOpacity=it))})
@@ -79,7 +93,7 @@ fun PresetDialog(preset: Preset, dismiss: () -> Unit, save: (Preset) -> Unit) {
             PresetPreview(draft,Modifier.fillMaxWidth().height(120.dp))
             ColorPicker("Color del texto",draft.textColor) {draft=draft.copy(textColor=it)}
             ColorPicker("Color del cuadro",draft.backgroundColor) {draft=draft.copy(backgroundColor=it)}
-            StyleControls(draft.style) {draft=draft.copy(style=it)}
+            StyleControls(draft.style,button=draft.kind=="button") {draft=draft.copy(style=it)}
         }
     }},confirmButton={TextButton(onClick={save(draft)},enabled=draft.name.isNotBlank()){Text("Guardar preset")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
 }

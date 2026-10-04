@@ -8,7 +8,9 @@ class PlaybackLogicTest {
     @Test fun buttonAndTimerCanConsumeOnlyOneExitAndOldTimersCannotExitNewVisits() {
         val gate = ExitGate()
         val oldTimer = gate.enter()
+        assertTrue(gate.available(oldTimer))
         assertTrue(gate.take(oldTimer)) // button wins
+        assertFalse(gate.available(oldTimer))
         assertFalse(gate.take(oldTimer)) // timer and second tap lose
         val newTimer = gate.enter()
         assertFalse(gate.take(oldTimer))

@@ -17,6 +17,7 @@ class ExitGate {
     var token: Long = 0; private set
     private var consumed = false
     fun enter(): Long { token++; consumed = false; return token }
+    fun available(visit:Long):Boolean = visit==token && !consumed
     fun take(visit: Long): Boolean {
         if (visit != token || consumed) return false
         consumed = true; return true
@@ -43,9 +44,9 @@ private fun JSONObject.media(): MediaOptions {
         boundedValue(m.optDouble("seconds", 3.0).toFloat(), .2f, 3600f, 3f), m.optLong("revision", 0))
 }
 private fun parse(raw: String) = try { JSONObject(raw) } catch (_: Exception) { JSONObject() }
-fun Element.settings(): String = JSONObject().put("media", media.json()).put("transition", transition.json()).put("style", style.json()).put("speaker", speakerName).put("source", sourceName).put("expressionFrames", JSONArray(expressionFrames)).toString()
+fun Element.settings(): String = JSONObject().put("media", media.json()).put("transition", transition.json()).put("style", style.json()).put("speaker", speakerName).put("source", sourceName).put("expressionFrames", JSONArray(expressionFrames)).put("panel",panel?.json()).toString()
 fun Element.withSettings(raw: String): Element = parse(raw).let { copy(media = it.media(), transition = it.transition(), style = it.visualStyle(), speakerName = it.optString("speaker"), sourceName = it.optString("source"),
-    expressionFrames = it.optJSONArray("expressionFrames")?.let { frames -> (0 until frames.length()).map { i -> frames.optLong(i) }.filter { id -> id > 0 } } ?: emptyList()) }
+    panel = it.optJSONObject("panel")?.panelOptions(), expressionFrames = it.optJSONArray("expressionFrames")?.let { frames -> (0 until frames.length()).map { i -> frames.optLong(i) }.filter { id -> id > 0 } } ?: emptyList()) }
 fun Slide.settings(): String = JSONObject().put("media", media.json()).put("audio", audio)
     .put("audioRevision", audioRevision).put("audioLoop", audioLoop).put("audioVolume", boundedPosition(audioVolume))
     .put("autoEnabled", autoEnabled).put("autoSeconds", boundedValue(autoSeconds, .2f, 3600f, 5f))

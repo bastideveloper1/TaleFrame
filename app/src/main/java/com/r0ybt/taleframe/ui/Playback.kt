@@ -18,7 +18,9 @@ import kotlinx.coroutines.delay
 
 private data class Exit(val from: Slide, val to: Long, val effect: Transition)
 @Composable
-fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier, navigate: (Long) -> Unit) {
+fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier, blockedTargets:Set<Long> = emptySet(), leave:()->Unit = {}, navigate: (Long) -> Unit) {
+    var blockedNotice by remember(slide?.id) {mutableStateOf(false)}
+    val currentBlocked by rememberUpdatedState(blockedTargets)
     val gate = remember { ExitGate() }
     var entry by remember { mutableLongStateOf(0) }
     var exit by remember { mutableStateOf<Exit?>(null) }
@@ -28,14 +30,16 @@ fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier
     val currentSlide by rememberUpdatedState(slide)
     val request: (Long, Transition) -> Unit = { target, effect ->
         val current = currentSlide
-        if (current != null && exit == null && active && gate.take(gate.token)) exit = Exit(current, target, effect)
+        if(target in currentBlocked && active && exit==null && gate.available(gate.token)) blockedNotice=true
+        else if (current != null && exit == null && active && gate.take(gate.token)) exit = Exit(current, target, effect)
     }
     LaunchedEffect(slide?.id, entry, active) {
         val token = gate.enter()
         val current = slide
         if (active && exit == null && current?.autoEnabled == true && current.autoTargetId != null) {
             delay((current.autoSeconds.coerceIn(.2f, 3600f) * 1000).toLong())
-            if (gate.take(token)) exit = Exit(current, current.autoTargetId, current.transition)
+            if(current.autoTargetId in currentBlocked) {if(gate.available(token) && exit==null) blockedNotice=true}
+            else if (gate.take(token)) exit = Exit(current, current.autoTargetId, current.transition)
         }
     }
     LaunchedEffect(exit) {
@@ -55,6 +59,8 @@ fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier
             SlideCanvas(slide, elements.filter { it.slideId == slide.id }, Modifier.fillMaxSize().transitionLayer(action?.effect ?: Transition("none"), progress.value, true, constraints.maxWidth.toFloat()),
                 preview = action != null || !active, onAction = request)
         }
+        TextButton(onClick=leave,modifier=Modifier.align(Alignment.TopStart).background(Color(0xAA202026))) {Text("Salir de reproducción",color=Color.White)}
+        if(blockedNotice) androidx.compose.material3.AlertDialog(onDismissRequest={blockedNotice=false},title={Text("Destino en borrador")},text={Text("Esta acción apunta a una lámina omitida. Permaneces en la escena actual; puedes usar otra acción o salir de reproducción. No se eligió una ruta alternativa.")},confirmButton={TextButton(onClick={blockedNotice=false}){Text("Permanecer aquí")}},dismissButton={TextButton(onClick=leave){Text("Salir de reproducción")}})
     }
 }
 private fun Modifier.transitionLayer(effect: Transition, progress: Float, incoming: Boolean, width: Float): Modifier = graphicsLayer {

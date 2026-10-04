@@ -16,6 +16,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.text.style.TextOverflow
 import com.r0ybt.taleframe.data.*
 import com.r0ybt.taleframe.state.StoryViewModel
 
@@ -42,6 +45,14 @@ fun TaleFrameApp(model: StoryViewModel) {
     var nameRequest by remember { mutableStateOf<NameRequest?>(null) }
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var elementRequest by remember { mutableStateOf<Element?>(null) }
+    var showSettings by remember {mutableStateOf(false)}
+    var panelLibraryId by remember {mutableStateOf<Long?>(null)}
+    var coverPicker by remember {mutableStateOf(false)}
+    var librarySection by rememberSaveable {mutableStateOf("images")}
+    var savingTemplate by remember {mutableStateOf(false)}
+    var applyingTemplate by remember {mutableStateOf<SlideTemplate?>(null)}
+    var toolbarExpanded by rememberSaveable {mutableStateOf(true)}
+    var playNotice by remember {mutableStateOf<String?>(null)}
     var showLibrary by rememberSaveable { mutableStateOf(false) }
     var showCharacters by rememberSaveable { mutableStateOf(false) }
     var showDialogs by rememberSaveable { mutableStateOf(false) }
@@ -130,20 +141,27 @@ fun TaleFrameApp(model: StoryViewModel) {
     fun back() {
         when { playing -> playing = false; showLibrary -> showLibrary = false; slideId != null -> slideId = null; else -> projectId = null }
     }
-    fun play() { playSlideId = slides.minByOrNull { it.id }?.id; playing = playSlideId != null }
+    fun play(fromCurrent:Boolean=false) {
+        val p=project ?: return
+        val first=if(fromCurrent) slide else playbackStart(p,slides)
+        if(first==null) {playNotice="No hay láminas disponibles para reproducir.";return}
+        if(p.skipDrafts && first.draft) {playNotice="Esta lámina está en borrador. Desactiva «Omitir láminas en borrador» para probarla.";return}
+        playSlideId=first.id;playing=true
+    }
     BackHandler(projectId != null || playing) { back() }
     Scaffold { padding ->
         if (playing) {
-            Player(slides.find { it.id == playSlideId } ?: slides.minByOrNull { it.id }, story.elements, Modifier.padding(padding)) { target ->
+            Player(slides.find { it.id == playSlideId }, story.elements, Modifier.padding(padding), blockedTargets=slides.filter {project?.skipDrafts==true && it.draft}.map {it.id}.toSet(), leave={playing=false}) { target ->
                 if (slides.any { it.id == target }) playSlideId = target
             }
         } else Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
-                if (projectId != null) TextButton(onClick = { back() }) { Text("‹ Volver") }
+                if (projectId != null) TextButton(onClick = { back() },modifier=Modifier.semantics {contentDescription="Volver"}) { Text("‹") }
                 Text(if (showLibrary) "Biblioteca · ${project?.name ?: ""}" else slide?.name ?: project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1)
-                if (project != null && !showLibrary) TextButton(onClick = { showLibrary = true }) { Text("Biblioteca") }
-                if (slides.isNotEmpty()) TextButton(onClick = { play() }) { Text("▶ Play") }
+                    modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1,overflow=TextOverflow.Ellipsis)
+                if(projectId==null) TextButton(onClick={showSettings=true}) {Text("Tema")}
+                if (project != null && !showLibrary) TextButton(onClick = { librarySection="images";showLibrary = true }) { Text("Biblioteca") }
+                if (slides.isNotEmpty()) TextButton(onClick = { play(slide!=null) }) { Text("▶ Play") }
             }
             if (!ready) Text("Abriendo proyectos…", Modifier.padding(24.dp))
             else if (projectId == null) {
@@ -153,6 +171,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(story.projects, key = { it.id }) { p ->
                         Card(Modifier.fillMaxWidth().clickable { projectId = p.id }) {
+                            ProjectCover(p,story,Modifier.fillMaxWidth().height(140.dp))
                             Column(Modifier.padding(16.dp)) {
                                 Text(p.name, style = MaterialTheme.typography.titleMedium)
                                 Text("${story.slides.count { it.projectId == p.id }} láminas")
@@ -170,8 +189,10 @@ fun TaleFrameApp(model: StoryViewModel) {
                     replace = { r -> importLibrary(r.type, r.category, r) }, use = { r ->
                         resourceUseId = r.id; resourceUseSlide = slideId
                         resourceUseMode = if (r.type == "audio") "audio" else if (r.category == "background") "background" else "element"
-                    })
+                    },initialSection=librarySection,applyTemplate={applyingTemplate=it},createComposition={showLibrary=false;nameRequest=NameRequest("slides",null,projectId,"Composición")})
             } else if (slide == null) {
+                if(project!=null) ProjectEntry(project,story,slides,preferences.getLong("last_slide_${project.id}",0L),
+                    cover={coverPicker=true},resume={id->slideId=id},library={section->librarySection=section;showLibrary=true},play={play()},skip={value->model.edit {setSkipDrafts(project.id,value)}})
                 Text("Álbum de láminas", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { nameRequest = NameRequest("slides", null, projectId, "Lámina ${slides.size + 1}") }) { Text("+ Crear lámina") }
@@ -181,9 +202,9 @@ fun TaleFrameApp(model: StoryViewModel) {
                 }
                 if (slides.isEmpty()) Text("Añade la primera lámina de tu historia.", Modifier.padding(24.dp))
                 Album(slides, story.elements, albumSize, Modifier.weight(1f),
-                    open = { slideId = it.id }, rename = { nameRequest = NameRequest("slides", it.id, null, it.name) },
+                    open = { slideId = it.id; preferences.edit {putLong("last_slide_$projectId",it.id)} }, rename = { nameRequest = NameRequest("slides", it.id, null, it.name) },
                     delete = { deleteRequest = DeleteRequest("slides", it.id, it.name) },
-                    duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } })
+                    duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } },initialId=project?.let {initialSlide(it,slides)?.id},setInitial={s->model.edit {setInitialSlide(s.projectId,s.id)}},setDraft={s->model.edit {setDraft(s.id,!s.draft)}})
             } else {
                 SlideCanvas(slide, story.elements.filter { it.slideId == slide.id }, Modifier.weight(1f).fillMaxWidth(), editing = true,
                     onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y) } },
@@ -212,12 +233,18 @@ fun TaleFrameApp(model: StoryViewModel) {
                     }
                 }
                 Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
+                    TextButton(onClick={toolbarExpanded=!toolbarExpanded},modifier=Modifier.semantics {contentDescription=if(toolbarExpanded) "Reducir herramientas" else "Mostrar herramientas"}){Text(if(toolbarExpanded) "‹ Herramientas" else "Herramientas ›")}
+                    if(!toolbarExpanded) {
+                        TextButton(onClick={nameRequest=NameRequest("layers",null,null,"")}) {Text("Elementos")}
+                        TextButton(onClick={play(true)}) {Text("Reproducir desde esta lámina")}
+                    }
+                    if(toolbarExpanded) {
                     TextButton(onClick = { showBackground = true }) { Text("Fondo") }
                     TextButton(onClick = { showCharacters = true }) { Text("+ Personaje") }
                     TextButton(onClick = { showDialogs = true }) { Text("+ Diálogo") }
                     TextButton(onClick = { elementRequest = Element(0, slide.id, "text", "", y = .15f, width = .6f, height = .18f) }) { Text("+ Texto") }
                     TextButton(onClick = { elementRequest = Element(0, slide.id, "button", "", x = .1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,
-                        y = .7f, backgroundColor = 0xFF6750A4.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
+                        y = .7f, backgroundColor = 0xFF8E435F.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
                     TextButton(onClick = { importImage("element") }) { Text("+ Imagen") }
                     TextButton(onClick = { importImage("element", "gif") }) { Text("+ GIF") }
                     TextButton(onClick = { importImage("element", "video") }) { Text("+ Video") }
@@ -228,6 +255,11 @@ fun TaleFrameApp(model: StoryViewModel) {
                     TextButton(onClick = { movingBackground = !movingBackground }, enabled = slide.image != null && slide.backgroundMode == "manual" && !slide.backgroundLocked) { Text(if (movingBackground) "Terminar fondo" else "Mover fondo") }
                     TextButton(onClick = { selectedId = null; movingBackground = false }) { Text("Deseleccionar") }
                     TextButton(onClick = { nameRequest = NameRequest("layers", null, null, "") }) { Text("Elementos") }
+                    TextButton(onClick={model.edit {saveElement(Element(0,slide.id,"image","",width=.45f,height=.4f,backgroundColor=0xFFF4E8EB.toInt(),panel=PanelOptions()))}}) {Text("+ Panel")}
+                    TextButton(onClick={savingTemplate=true}){Text("Guardar como plantilla")}
+                    TextButton(onClick={model.edit {setDraft(slide.id,!slide.draft)}}){Text(if(slide.draft) "Marcar completa" else "Marcar borrador")}
+                    TextButton(onClick={play(true)}){Text("Reproducir desde esta lámina")}
+                    }
                 }
             }
         }
@@ -241,7 +273,9 @@ fun TaleFrameApp(model: StoryViewModel) {
                     }
                 }
             }, confirmButton = { TextButton(onClick = { nameRequest = null }) { Text("Cerrar") } })
-        } else NameDialog(if (request.id == null) "Crear" else "Renombrar", request.initial, { nameRequest = null }) { name ->
+        } else if(request.table=="slides" && request.id==null) NewSlideDialog(story,requireNotNull(request.parent),request.initial,{nameRequest=null},{name,template->
+            model.edit {templates.createSlide(requireNotNull(request.parent),name,template)};nameRequest=null
+        }) else NameDialog(if (request.id == null) "Crear" else "Renombrar", request.initial, { nameRequest = null }) { name ->
             model.edit { if (request.id != null) rename(request.table, request.id, name) else if (request.table == "projects") createProject(name) else createSlide(requireNotNull(request.parent), name) }
             nameRequest = null
         }
@@ -254,7 +288,7 @@ fun TaleFrameApp(model: StoryViewModel) {
     }
     elementRequest?.let { e -> ElementDialog(e, slides, story.elements, { elementRequest = null }, { updated -> model.edit { editElement(e, updated) }; elementRequest = null },
         replace = { elementRequest = null; importImage("replace", e.media.type.takeIf { it != "slideshow" } ?: "image", e.id) },
-        addFrames = { importSequence(e.id) }, presets = story.presets.filter { it.projectId == projectId }) }
+        addFrames = { importSequence(e.id) }, presets = story.presets.filter { it.projectId == projectId },assignLibrary={panelLibraryId=e.id;elementRequest=null}) }
     if (showBackground && slide != null) BackgroundDialog(slide, { showBackground = false },
         save = { s -> model.edit { editBackground(slide, s) }; showBackground = false }, import = { showBackground = false; importImage("background") },
         importGif = { showBackground = false; importImage("background", "gif") },
@@ -305,5 +339,13 @@ fun TaleFrameApp(model: StoryViewModel) {
         if (project != null) model.edit { library.savePreset(Preset(0, project, name, kind, element.textColor, element.backgroundColor, element.style, element.transition)) }
         savePresetElement = null
     }) }
+    panelLibraryId?.let {id->ResourcePicker(story.resources.filter {it.projectId==projectId && it.type=="image"},"Imagen del panel",{panelLibraryId=null},{r->if(r!=null) model.edit {val e=read().elements.find {it.id==id};if(e!=null) saveElement(e.copy(image=r.path,resourceId=r.id,media=MediaOptions()))};panelLibraryId=null})}
+    if(coverPicker && project!=null) ResourcePicker(story.resources.filter {it.projectId==project.id && it.type=="image"},"Portada del proyecto",{coverPicker=false},{r->model.edit {setCover(project.id,r?.id)};coverPicker=false},allowNone=true)
+    if(savingTemplate && slide!=null) NameDialog("Guardar como plantilla",slide.name,{savingTemplate=false},{name->model.edit {templates.saveSlide(slide.id,name)};savingTemplate=false})
+    applyingTemplate?.let {t->NameDialog("Nueva lámina desde ${t.name}","Lámina ${slides.size+1}",{applyingTemplate=null},{name->val p=projectId;if(p!=null) model.edit {templates.createSlide(p,name,t.id)};applyingTemplate=null;showLibrary=false;slideId=null})}
+    if(showSettings) AlertDialog(onDismissRequest={showSettings=false},title={Text("Apariencia de TaleFrame")},text={Column {
+        listOf("system" to "Seguir sistema","light" to "Rosa claro","dark" to "Oscuro").forEach {(key,label)->TextButton(onClick={preferences.edit {putString("theme",key)}}){Text(label)}}
+    }},confirmButton={TextButton(onClick={showSettings=false}){Text("Cerrar")}})
+    playNotice?.let {notice->AlertDialog(onDismissRequest={playNotice=null},title={Text("Reproducción")},text={Text(notice)},confirmButton={TextButton(onClick={playNotice=null}){Text("Entendido")}})}
     error?.let { message -> AlertDialog(onDismissRequest = { model.clearError() }, title = { Text("No se pudo completar el cambio") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { model.clearError() }) { Text("Aceptar") } }) }
 }

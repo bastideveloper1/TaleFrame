@@ -26,8 +26,8 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
     var hex by remember(selected) { mutableStateOf("%06X".format(selected and 0xFFFFFF)) }
     val custom = hex.takeIf { it.length == 6 && it.all { c -> c in "0123456789abcdefABCDEF" } }?.toLongOrNull(16)?.let { (it or 0xFF000000).toInt() }
     Text(label,style=MaterialTheme.typography.labelLarge)
-    colors.chunked(5).forEach { row -> Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.padding(vertical=4.dp)) {
-        row.forEach { value -> val color=value.toInt(); Surface(onClick={pick(color)},color=Color(color),shape=MaterialTheme.shapes.small,modifier=Modifier.size(38.dp).semantics { contentDescription="Color #${"%06X".format(color and 0xFFFFFF)}" },border=androidx.compose.foundation.BorderStroke(if(color==selected) 3.dp else 1.dp,if(color==selected) MaterialTheme.colorScheme.primary else Color.Gray)) {} }
+    colors.chunked(5).forEach { row -> Row(horizontalArrangement=Arrangement.spacedBy(4.dp),modifier=Modifier.padding(vertical=4.dp)) {
+        row.forEach { value -> val color=value.toInt(); Surface(onClick={pick(color)},color=Color(color),shape=MaterialTheme.shapes.small,modifier=Modifier.size(48.dp).semantics { contentDescription="Color #${"%06X".format(color and 0xFFFFFF)}" },border=androidx.compose.foundation.BorderStroke(if(color==selected) 3.dp else 1.dp,if(color==selected) MaterialTheme.colorScheme.primary else Color.Gray)) {} }
     } }
     Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
         OutlinedTextField(hex,{hex=it.take(6)},label={Text("HEX (RRGGBB)")},singleLine=true,modifier=Modifier.weight(1f))
@@ -36,11 +36,11 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
 }
 
 @Composable
-fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList()) {
+fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList(), assignLibrary:()->Unit = {}) {
     var draft by remember(element.id) { mutableStateOf(element) }
     var showStyle by remember(element.id) { mutableStateOf(false) }
     var presetPicker by remember(element.id) { mutableStateOf<String?>(null) }
-    AlertDialog(onDismissRequest = dismiss, title = { Text(when (element.kind) { "image" -> "Imagen"; "button" -> "Botón"; else -> "Cuadro de texto" }) }, text = {
+    AlertDialog(onDismissRequest = dismiss, title = { Text(when (element.kind) { "image" -> if(element.panel!=null) "Panel" else "Imagen"; "button" -> "Botón"; else -> "Cuadro de texto" }) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (element.kind == "button") {
                 if (presets.any { it.kind == "button" }) TextButton(onClick = { presetPicker = "button" }) { Text("Elegir preset de botón") }
@@ -48,9 +48,11 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
             }
             if (element.kind != "image") OutlinedTextField(draft.text, { draft = draft.copy(text = it) }, label = { Text("Texto") }, minLines = 2, maxLines = 5)
             else {
-                TextButton(onClick = replace) { Text("Reemplazar recurso") }
+                TextButton(onClick = {if(draft.panel!=null) save(draft);replace()}) { Text(if(draft.panel!=null) "Asignar imagen al panel" else "Reemplazar recurso") }
+                if(draft.panel!=null) {TextButton(onClick={save(draft);assignLibrary()}){Text("Elegir imagen de Biblioteca")};TextButton(onClick={draft=draft.copy(image=null,resourceId=null,media=MediaOptions())}) {Text("Vaciar panel")}}
+                if(draft.panel!=null) PanelControls(requireNotNull(draft.panel)) {draft=draft.copy(panel=it)}
                 MediaControls(draft.media) { draft = draft.copy(media = it) }
-                if (draft.media.type == "image" || draft.media.type == "slideshow") TextButton(onClick = { save(draft); addFrames() }) { Text("Añadir imágenes a la secuencia") }
+                if (draft.panel==null && (draft.media.type == "image" || draft.media.type == "slideshow")) TextButton(onClick = { save(draft); addFrames() }) { Text("Añadir imágenes a la secuencia") }
             }
             if (element.kind == "text") {
                 ColorPicker("Color del texto", draft.textColor) { draft = draft.copy(textColor = it) }
@@ -83,7 +85,7 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                         ColorPicker("Color del texto", draft.textColor) { draft = draft.copy(textColor = it) }
                         ColorPicker("Color del cuadro", draft.backgroundColor) { draft = draft.copy(backgroundColor = it) }
                     }
-                    StyleControls(draft.style) { draft = draft.copy(style = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f, height = draft.height.takeIf { h -> h > 0 } ?: .3f) }
+                    StyleControls(draft.style,button=draft.kind=="button") { draft = draft.copy(style = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f, height = draft.height.takeIf { h -> h > 0 } ?: .3f) }
                     if (draft.style.showName) OutlinedTextField(draft.speakerName, { draft = draft.copy(speakerName = it) }, label = { Text("Nombre visible") }, singleLine = true)
                 }
             }

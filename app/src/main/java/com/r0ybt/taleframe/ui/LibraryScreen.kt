@@ -21,8 +21,8 @@ private data class LibraryDeletion(val table: String, val id: Long, val name: St
 @Composable
 fun LibraryScreen(story: Story, projectId: Long, modifier: Modifier = Modifier,
     edit: (StoryRepository.() -> Unit) -> Unit, import: (String, String) -> Unit,
-    replace: (Resource) -> Unit, use: (Resource) -> Unit) {
-    var section by rememberSaveable(projectId) {mutableStateOf("images")}
+    replace: (Resource) -> Unit, use: (Resource) -> Unit, initialSection:String="images", applyTemplate:(SlideTemplate)->Unit = {}, createComposition:()->Unit = {}) {
+    var section by rememberSaveable(projectId) {mutableStateOf(initialSection)}
     var query by rememberSaveable(projectId) {mutableStateOf("")}
     var onlyUnused by rememberSaveable(projectId) {mutableStateOf(false)}
     var characterId by rememberSaveable(projectId) {mutableStateOf<Long?>(null)}
@@ -67,10 +67,11 @@ fun LibraryScreen(story: Story, projectId: Long, modifier: Modifier = Modifier,
             }
         } else {
             Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(4.dp)) {
-                listOf("characters" to "Personajes","background" to "Fondos","images" to "Imágenes","gif" to "GIF","video" to "Videos","audio" to "Audio","presets" to "Presets").forEach { (key,label)->FilterChip(section==key,{section=key;query=""},label={Text(label)}) }
+                listOf("characters" to "Personajes","background" to "Fondos","images" to "Imágenes","gif" to "GIF","video" to "Videos","audio" to "Audio","presets" to "Presets","templates" to "Plantillas").forEach { (key,label)->FilterChip(section==key,{section=key;query=""},label={Text(label)}) }
             }
             OutlinedTextField(query,{query=it},label={Text("Buscar…")},singleLine=true,modifier=Modifier.fillMaxWidth().padding(horizontal=12.dp))
             when(section) {
+                "templates" -> TemplatesLibrary(story,projectId,query,edit,applyTemplate,createComposition,Modifier.weight(1f))
                 "characters" -> {
                     TextButton(onClick={characterRequest=Character(0,projectId,"")}){Text("+ Crear personaje")}
                     val characters=story.characters.filter {it.projectId==projectId && it.name.contains(query,true)}

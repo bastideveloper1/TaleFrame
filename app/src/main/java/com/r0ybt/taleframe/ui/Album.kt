@@ -19,7 +19,7 @@ fun SlidePreview(slide: Slide, elements: List<Element>, modifier: Modifier = Mod
 
 @Composable
 fun Album(slides: List<Slide>, elements: List<Element>, size: String, modifier: Modifier = Modifier,
-    open: (Slide) -> Unit, rename: (Slide) -> Unit, delete: (Slide) -> Unit, duplicate: (Slide) -> Unit, reorder: (Slide, Int) -> Unit) {
+    open: (Slide) -> Unit, rename: (Slide) -> Unit, delete: (Slide) -> Unit, duplicate: (Slide) -> Unit, reorder: (Slide, Int) -> Unit, initialId:Long? = slides.minByOrNull {it.id}?.id, setInitial:(Slide)->Unit = {}, setDraft:(Slide)->Unit = {}) {
     val columns = when (size) { "Pequeña" -> 3; "Mediana" -> 2; else -> 1 }
     LazyVerticalGrid(GridCells.Fixed(columns), modifier, contentPadding = PaddingValues(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -33,10 +33,13 @@ fun Album(slides: List<Slide>, elements: List<Element>, size: String, modifier: 
                     val targets = buttons.mapNotNull { e -> slides.indexOfFirst { it.id == e.targetId }.takeIf { it >= 0 }?.plus(1) }.distinct()
                     Text(if (buttons.isEmpty()) (if (slide.autoEnabled) "Avance automático" else "FIN") else if (targets.isEmpty()) "Sin destino" else "→ ${targets.joinToString(", ")}${if (buttons.any { it.targetId == null }) " · ?" else ""}", style = MaterialTheme.typography.labelSmall)
                     if (slide.autoEnabled) Text("⏱ ${slide.autoSeconds} s → ${slides.find { it.id == slide.autoTargetId }?.name ?: "Sin destino"}", style = MaterialTheme.typography.labelSmall)
-                    if (slide.id == slides.minByOrNull { it.id }?.id) Text("Inicio", style = MaterialTheme.typography.labelSmall)
+                    if(slide.draft) Text("Borrador / Incompleta",color=MaterialTheme.colorScheme.tertiary,style=MaterialTheme.typography.labelSmall)
+                    if (slide.id == initialId) Text("Inicio", style = MaterialTheme.typography.labelSmall)
                     Box {
                         TextButton(onClick = { menu = true }, contentPadding = PaddingValues(0.dp)) { Text("Opciones") }
                         DropdownMenu(menu, { menu = false }) {
+                            DropdownMenuItem(text={Text("Establecer como lámina inicial")},onClick={menu=false;setInitial(slide)})
+                            DropdownMenuItem(text={Text(if(slide.draft) "Marcar completa" else "Marcar borrador")},onClick={menu=false;setDraft(slide)})
                             DropdownMenuItem(text = { Text("Renombrar") }, onClick = { menu = false; rename(slide) })
                             DropdownMenuItem(text = { Text("Duplicar lámina") }, onClick = { menu = false; duplicate(slide) })
                             DropdownMenuItem(text = { Text("Mover antes") }, enabled = slides.first().id != slide.id, onClick = { menu = false; reorder(slide, -1) })

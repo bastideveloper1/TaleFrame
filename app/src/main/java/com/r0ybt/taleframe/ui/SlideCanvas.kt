@@ -1,5 +1,14 @@
 package com.r0ybt.taleframe.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,7 +48,7 @@ fun SlideCanvas(
     referenceOpacity: Float = .35f, movingBackground: Boolean = false, onBackgroundMove: (Slide) -> Unit = {},
     preview: Boolean = false, onAction: ((Long, Transition) -> Unit)? = null
 ) {
-    BoxWithConstraints(modifier.background(Color(0xFF101014)), contentAlignment = Alignment.Center) {
+    BoxWithConstraints(modifier.background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.Center) {
         val width = minOf(maxWidth, maxHeight * .75f)
         val height = width / .75f
         var stage by remember(slide.id) { mutableStateOf(IntSize.Zero) }
@@ -150,6 +159,20 @@ fun SlideCanvas(
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editing && reference != null) 1f - referenceOpacity.coerceIn(0f, .9f) else 1f }) {
                 Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate, onAction) { id, size -> measured[id] = size }
             }
+            if(editing && draft!=null) {
+                val e=requireNotNull(draft);val m=measured[e.id] ?: IntSize.Zero
+                val b=elementBounds(e,stage.width.toFloat(),stage.height.toFloat(),m.width.toFloat(),m.height.toFloat())
+                val guide=MaterialTheme.colorScheme.primary.copy(alpha=.65f)
+                Canvas(Modifier.fillMaxSize()) {
+                    val tolerance=6.dp.toPx()
+                    if(kotlin.math.abs(b.left+b.width/2-size.width/2)<tolerance) drawLine(guide,Offset(size.width/2,0f),Offset(size.width/2,size.height),1.dp.toPx())
+                    if(kotlin.math.abs(b.top+b.height/2-size.height/2)<tolerance) drawLine(guide,Offset(0f,size.height/2),Offset(size.width,size.height/2),1.dp.toPx())
+                    if(b.left<tolerance) drawLine(guide,Offset(1f,0f),Offset(1f,size.height),1.dp.toPx())
+                    if(kotlin.math.abs(b.left+b.width-size.width)<tolerance) drawLine(guide,Offset(size.width-1f,0f),Offset(size.width-1f,size.height),1.dp.toPx())
+                    if(kotlin.math.abs(b.top+b.height-size.height)<tolerance) drawLine(guide,Offset(0f,size.height-1f),Offset(size.width,size.height-1f),1.dp.toPx())
+                    if(b.top<tolerance) drawLine(guide,Offset(0f,1f),Offset(size.width,1f),1.dp.toPx())
+                }
+            }
         }
     }
 }
@@ -194,19 +217,29 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
         else with(density) { Modifier.widthIn(max = (stage.width * .8f).toDp()).heightIn(max = stage.height.toDp()) }
     val padding = with(density) { (stage.width * .025f).toDp() }
     val font = with(density) { (stage.width * .045f).toSp() }
-    val click = if (!editing && !preview && e.kind == "button" && e.targetId != null) Modifier.clickable { navigate(e.targetId) } else Modifier
+    val interactions=remember(e.id) {MutableInteractionSource()}
+    val pressed by interactions.collectIsPressedAsState()
+    val pulse=if(!editing && !preview && foreground() && e.kind=="button" && e.style.buttonEffect=="pulse") {
+        val transition=rememberInfiniteTransition(label="Pulso del botón")
+        val value by transition.animateFloat(1f,1.025f,infiniteRepeatable(tween(1100),RepeatMode.Reverse),label="Escala")
+        value
+    } else 1f
+    val accent=MaterialTheme.colorScheme.primary
+    val click = if (!editing && !preview && e.kind == "button" && e.targetId != null) Modifier.clickable(interactionSource=interactions,indication=null,role=androidx.compose.ui.semantics.Role.Button) { navigate(e.targetId) } else Modifier
     Box(Modifier.offset { IntOffset(b.left.roundToInt(), b.top.roundToInt()) }.then(dimensions).onSizeChanged(onMeasure)
-        .graphicsLayer { rotationZ = e.rotation; scaleX = if (e.flipped) -1f else 1f }
+        .graphicsLayer { rotationZ = e.rotation; val factor=if(pressed) .97f else pulse;scaleX = (if (e.flipped) -1f else 1f)*factor;scaleY=factor }
         .testTag("element-${e.id}").semantics { contentDescription = if (e.kind == "image") e.sourceName.ifBlank { "Imagen ${e.id}" } else e.text }
-        .then(if (selected && editing) Modifier.border(2.dp, if (e.locked) Color(0xFFFFC107) else Color(0xFFC8B6FF)) else Modifier)
+        .then(if (selected && editing) Modifier.border(2.dp, if (e.locked) MaterialTheme.colorScheme.tertiary else accent) else Modifier)
         .then(click)) {
         if (e.kind == "image") {
-            LocalMedia(e.image, e.media, Modifier.fillMaxSize().graphicsLayer { alpha = e.opacity }, preview, editing = editing)
+            if(e.panel!=null) PanelVisual(e,preview,editing) else LocalMedia(e.image, e.media, Modifier.fillMaxSize().graphicsLayer { alpha = e.opacity }, preview, editing = editing)
         } else {
-            DialogueVisual(e, font, padding, Modifier.then(if (e.width > 0 && e.height > 0) Modifier.fillMaxSize() else Modifier).graphicsLayer { alpha = e.opacity })
+            DialogueVisual(e, font, padding, Modifier.then(if (e.width > 0 && e.height > 0) Modifier.fillMaxSize() else Modifier).graphicsLayer { alpha = if(pressed) e.opacity*.8f else e.opacity },editing=editing)
         }
+        if(e.kind=="button" && e.style.buttonEffect=="glow") Box(Modifier.matchParentSize().border(3.dp,Color(e.textColor).copy(alpha=.25f*e.opacity),RoundedCornerShape(12.dp)))
+        if(selected && editing && e.locked) Text("🔒",color=MaterialTheme.colorScheme.onTertiaryContainer,modifier=Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.tertiaryContainer))
         if (selected && editing && !e.locked && e.rotation == 0f && b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }) {
-            Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(Color(0xFFC8B6FF)))
+            Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(accent))
         }
     }
 }

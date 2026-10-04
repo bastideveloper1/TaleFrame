@@ -41,7 +41,7 @@ class LibraryFlowTest {
                 tap("+ Expresión");field("Nombre de expresión",expression);tap("Asignar imagen");tap(resource);tap("Guardar expresión");await(expression)
             }
             val character=repo.read().characters.first {it.projectId==project}.id
-            tap("‹ Biblioteca");tap("‹ Volver");tap("Escena biblioteca")
+            tap("‹ Biblioteca");compose.onNodeWithContentDescription("Volver").performClick();compose.waitForIdle();tap("Escena biblioteca")
             tap("+ Personaje");tap("Guillermo");tap("Normal")
             compose.waitUntil(10_000) {repo.read().elements.any {it.characterId==character && it.kind=="image"}}
             val image=repo.read().elements.first {it.characterId==character && it.kind=="image"}

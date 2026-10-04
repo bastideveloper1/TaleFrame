@@ -1,6 +1,6 @@
 package com.r0ybt.taleframe.data
 
-data class Project(val id: Long, val name: String)
+data class Project(val id: Long, val name: String, val coverResourceId: Long? = null, val initialSlideId: Long? = null, val skipDrafts: Boolean = false)
 data class Slide(
     val id: Long, val projectId: Long, val name: String, val color: Int = -1,
     val image: String? = null, val order: Int = 0,
@@ -11,7 +11,7 @@ data class Slide(
     val audioLoop: Boolean = true, val audioVolume: Float = 1f, val audioRevision: Long = 0,
     val autoEnabled: Boolean = false, val autoSeconds: Float = 5f,
     val autoTargetId: Long? = null, val transition: Transition = Transition(),
-    val backgroundResourceId: Long? = null, val audioResourceId: Long? = null
+    val backgroundResourceId: Long? = null, val audioResourceId: Long? = null, val draft: Boolean = false
 )
 
 // x/y remain normalized over available travel, preserving MVP compositions.
@@ -26,11 +26,11 @@ data class Element(
     val media: MediaOptions = MediaOptions(), val transition: Transition = Transition(),
     val style: VisualStyle = VisualStyle(), val speakerName: String = "", val sourceName: String = "",
     val resourceId: Long? = null, val characterId: Long? = null, val expressionId: Long? = null, val presetId: Long? = null,
-    val expressionFrames: List<Long> = emptyList()
+    val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null
 )
 data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList(),
     val resources: List<Resource> = emptyList(), val characters: List<Character> = emptyList(),
-    val expressions: List<Expression> = emptyList(), val presets: List<Preset> = emptyList())
+    val expressions: List<Expression> = emptyList(), val presets: List<Preset> = emptyList(), val templates: List<SlideTemplate> = emptyList())
 fun boundedPosition(value: Float): Float = boundedValue(value, 0f, 1f, 0f)
 fun boundedValue(value: Float, min: Float, max: Float, fallback: Float): Float =
     if (value.isFinite()) value.coerceIn(min, max) else fallback

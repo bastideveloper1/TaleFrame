@@ -40,7 +40,7 @@ class LibraryPersistenceTest {
             db.version=3
         }
         try {StoryRepository(context,name).use {repo->
-            assertEquals(4,repo.readableDatabase.version)
+            assertEquals(5,repo.readableDatabase.version)
             val story=repo.read();val slide=story.slides.first {it.id==11L};val element=story.elements.first {it.id==42L}
             assertEquals(settings,repo.readableDatabase.rawQuery("SELECT settings FROM slides WHERE id=11",null).use {it.moveToFirst();it.getString(0)})
             assertEquals(elementSettings,repo.readableDatabase.rawQuery("SELECT settings FROM elements WHERE id=42",null).use {it.moveToFirst();it.getString(0)})
