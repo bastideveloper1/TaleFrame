@@ -32,6 +32,7 @@ fun TaleFrameApp(model: StoryViewModel) {
     val story by model.story.collectAsState()
     val ready by model.ready.collectAsState()
     val error by model.error.collectAsState()
+    val backup by model.backup.collectAsState()
     var projectId by rememberSaveable { mutableStateOf<Long?>(null) }
     var slideId by rememberSaveable { mutableStateOf<Long?>(null) }
     var playing by rememberSaveable { mutableStateOf(false) }
@@ -88,6 +89,35 @@ fun TaleFrameApp(model: StoryViewModel) {
     val slides = story.slides.filter { it.projectId == projectId }
     val slide = slides.find { it.id == slideId }
     val selected = story.elements.find { it.slideId == slideId && it.id == selectedId }
+    var exportProjectId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val backupExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(ProjectBackup.MIME)) { uri ->
+        exportProjectId?.let { id -> if (uri != null) model.exportProject(id, uri) }
+        exportProjectId = null
+    }
+    val backupImporter = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) model.importProject(uri) }
+    LaunchedEffect(backup.imported, story.projects) {
+        backup.imported?.takeIf { id -> story.projects.any { it.id == id } }?.let { id ->
+            projectId = id; slideId = null; showLibrary = false; playing = false; model.dismissBackup()
+        }
+    }
+    backup.progress?.let { phase -> AlertDialog(onDismissRequest = {}, title = { Text("Respaldo del proyecto") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text(phase) } }, confirmButton = {}) }
+    backup.copyName?.let { copyName -> AlertDialog(onDismissRequest = model::dismissBackup, title = { Text("Ya existe un proyecto con este nombre") },
+        text = { Text("Se importará como «${copyName}». Tus proyectos existentes se conservan.") },
+        confirmButton = { TextButton(onClick = model::confirmImportCopy) { Text("Importar como copia") } },
+        dismissButton = { TextButton(onClick = model::dismissBackup) { Text("Cancelar") } }) }
+    backup.exported?.let { uri -> AlertDialog(onDismissRequest = model::dismissBackup, title = { Text("Proyecto exportado") },
+        text = { Text("El archivo .taleframe permite restaurar tu proyecto en otra instalación de TaleFrame.") },
+        confirmButton = { TextButton(onClick = {
+            try {
+                val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                    type = ProjectBackup.MIME; putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                    clipData = android.content.ClipData.newRawUri("Proyecto TaleFrame", uri)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(android.content.Intent.createChooser(intent, "Compartir proyecto"))
+            } catch (_: android.content.ActivityNotFoundException) { }
+        }) { Text("Compartir") } }, dismissButton = { TextButton(onClick = model::dismissBackup) { Text("Listo") } }) }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = pickerSlide
         val kind = pickerKind
@@ -170,6 +200,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                 if (projectId != null) TextButton(onClick = { back() },modifier=Modifier.semantics {contentDescription="Volver"}) { Text("‹") }
                 Text(if (showLibrary) "Biblioteca · ${project?.name ?: ""}" else slide?.name ?: project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1,overflow=TextOverflow.Ellipsis)
+                if(projectId==null) TextButton(onClick={backupImporter.launch(arrayOf("*/*"))}) {Text("Importar")}
                 if(projectId==null) TextButton(onClick={showSettings=true}) {Text("Tema")}
                 if (project != null && !showLibrary) TextButton(onClick = { librarySection="images";showLibrary = true }) { Text("Biblioteca") }
                 if (slides.isNotEmpty()) TextButton(onClick = { play(slide!=null) }) { Text(if(slide!=null) "▶ Probar desde aquí" else "▶ Play",modifier=Modifier.widthIn(max=90.dp),style=MaterialTheme.typography.labelMedium) }
@@ -189,6 +220,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                                     TextButton(onClick = { nameRequest = NameRequest("projects", p.id, null, p.name) }) { Text("Renombrar") }
                                     TextButton(onClick = { deleteRequest = DeleteRequest("projects", p.id, p.name) }) { Text("Eliminar") }
                                 }
+                                TextButton(onClick = { exportProjectId = p.id; backupExporter.launch(ProjectBackup.suggestedFilename(p.name)) }) { Text("Exportar proyecto") }
                             }
                         }
                     }

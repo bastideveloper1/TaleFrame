@@ -16,6 +16,7 @@ import java.util.UUID
 class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     SQLiteOpenHelper(context.applicationContext, databaseName, null, 6) {
     private val imageDir = File(context.filesDir, if (databaseName == "taleframe.db") "backgrounds" else "backgrounds-$databaseName").apply { mkdirs() }
+    internal val mediaDirectory: File get() = imageDir
     val library = LibraryStore(this)
     val templates = TemplateStore(this)
     private val resolver = context.contentResolver
