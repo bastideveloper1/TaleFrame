@@ -3,21 +3,19 @@ package com.r0ybt.taleframe.ui
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
+import androidx.core.content.edit
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import com.r0ybt.taleframe.data.*
 import com.r0ybt.taleframe.state.StoryViewModel
 
@@ -33,144 +31,151 @@ fun TaleFrameApp(model: StoryViewModel) {
     var slideId by rememberSaveable { mutableStateOf<Long?>(null) }
     var playing by rememberSaveable { mutableStateOf(false) }
     var playSlideId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var selectedId by rememberSaveable(slideId) { mutableStateOf<Long?>(null) }
+    var actions by rememberSaveable { mutableStateOf(false) }
+    var movingBackground by rememberSaveable(slideId) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val preferences = remember { context.getSharedPreferences("editor", 0) }
+    var referenceId by rememberSaveable(slideId) { mutableStateOf(preferences.getLong("calco_slide_$slideId", 0L).takeIf { it > 0 }) }
+    var referenceOpacity by rememberSaveable(slideId) { mutableFloatStateOf(preferences.getFloat("calco_opacity_$slideId", .35f)) }
+    var albumSize by rememberSaveable { mutableStateOf(preferences.getString("album_size", "Mediana") ?: "Mediana") }
     var nameRequest by remember { mutableStateOf<NameRequest?>(null) }
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var elementRequest by remember { mutableStateOf<Element?>(null) }
     var showBackground by remember { mutableStateOf(false) }
+    var showReference by remember { mutableStateOf(false) }
+    var pickerSlide by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickerKind by rememberSaveable { mutableStateOf("background") }
     val project = story.projects.find { it.id == projectId }
     val slides = story.slides.filter { it.projectId == projectId }
     val slide = slides.find { it.id == slideId }
+    val selected = story.elements.find { it.slideId == slideId && it.id == selectedId }
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val current = slide
-        if(uri != null && current != null) model.edit { background(current.id,current.color,importImage(uri)) }
+        val id = pickerSlide
+        val kind = pickerKind
+        if (uri != null && id != null) model.edit {
+            val current = read().slides.find { it.id == id }
+            if (current != null) {
+                val path = importImage(uri)
+                if (kind == "background") background(id, current.color, path)
+                else saveElement(Element(0, id, "image", "", image = path, width = .4f, height = .4f))
+            }
+        }
     }
+    fun importImage(kind: String) { pickerSlide = slideId; pickerKind = kind; imagePicker.launch(arrayOf("image/png", "image/webp", "image/jpeg")) }
     fun back() {
         when { playing -> playing = false; slideId != null -> slideId = null; else -> projectId = null }
     }
-    fun play() { playSlideId = slides.firstOrNull()?.id; playing = playSlideId != null }
+    fun play() { playSlideId = slides.minByOrNull { it.id }?.id; playing = playSlideId != null }
     BackHandler(projectId != null || playing) { back() }
     Scaffold { padding ->
-        if(playing) {
-            Player(slides.find { it.id == playSlideId } ?: slides.firstOrNull(), story.elements, Modifier.padding(padding)) { target ->
-                if(slides.any { it.id == target }) playSlideId = target
+        if (playing) {
+            Player(slides.find { it.id == playSlideId } ?: slides.minByOrNull { it.id }, story.elements, Modifier.padding(padding)) { target ->
+                if (slides.any { it.id == target }) playSlideId = target
             }
         } else Column(Modifier.fillMaxSize().padding(padding)) {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                if(projectId != null) TextButton(onClick = { back() }) { Text("‹ Volver") }
-                Text(if(slide != null) slide.name else project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1)
-                if(slides.isNotEmpty()) TextButton(onClick = { play() }) { Text("▶ Play") }
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                if (projectId != null) TextButton(onClick = { back() }) { Text("‹ Volver") }
+                Text(slide?.name ?: project?.name ?: "TaleFrame", style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1)
+                if (slides.isNotEmpty()) TextButton(onClick = { play() }) { Text("▶ Play") }
             }
-            if(!ready) Box(Modifier.fillMaxSize()) { Text("Abriendo proyectos…", Modifier.padding(24.dp)) }
-            else if(projectId == null) {
-                Text("Tus historias · en este dispositivo", Modifier.padding(horizontal = 24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Button(onClick = { nameRequest = NameRequest("projects",null,null,"") }, modifier = Modifier.padding(20.dp)) { Text("+ Crear proyecto") }
-                if(story.projects.isEmpty()) Text("Crea tu primera historia para comenzar.", Modifier.padding(24.dp))
+            if (!ready) Text("Abriendo proyectos…", Modifier.padding(24.dp))
+            else if (projectId == null) {
+                Text("Tus historias · en este dispositivo", Modifier.padding(horizontal = 24.dp))
+                Button(onClick = { nameRequest = NameRequest("projects", null, null, "") }, modifier = Modifier.padding(20.dp)) { Text("+ Crear proyecto") }
+                if (story.projects.isEmpty()) Text("Crea tu primera historia para comenzar.", Modifier.padding(24.dp))
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(story.projects, key = { it.id }) { p ->
-                        StoryCard(p.name, "${story.slides.count { it.projectId == p.id }} láminas", { projectId = p.id },
-                            { nameRequest = NameRequest("projects",p.id,null,p.name) }, { deleteRequest = DeleteRequest("projects",p.id,p.name) })
+                        Card(Modifier.fillMaxWidth().clickable { projectId = p.id }) {
+                            Column(Modifier.padding(16.dp)) {
+                                Text(p.name, style = MaterialTheme.typography.titleMedium)
+                                Text("${story.slides.count { it.projectId == p.id }} láminas")
+                                Row {
+                                    TextButton(onClick = { nameRequest = NameRequest("projects", p.id, null, p.name) }) { Text("Renombrar") }
+                                    TextButton(onClick = { deleteRequest = DeleteRequest("projects", p.id, p.name) }) { Text("Eliminar") }
+                                }
+                            }
+                        }
                     }
                 }
-            } else if(slide == null) {
-                Button(onClick = { nameRequest = NameRequest("slides",null,projectId,"Lámina ${slides.size + 1}") }, modifier = Modifier.padding(20.dp)) { Text("+ Crear lámina") }
-                if(slides.isEmpty()) Text("Añade la primera lámina de tu historia.", Modifier.padding(24.dp))
-                LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(slides, key = { it.id }) { s ->
-                        StoryCard(s.name, if(s.id == slides.firstOrNull()?.id) "Inicio de la historia" else "Toca para diseñar", { slideId = s.id },
-                            { nameRequest = NameRequest("slides",s.id,null,s.name) }, { deleteRequest = DeleteRequest("slides",s.id,s.name) })
+            } else if (slide == null) {
+                Text("Álbum de láminas", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { nameRequest = NameRequest("slides", null, projectId, "Lámina ${slides.size + 1}") }) { Text("+ Crear lámina") }
+                    listOf("Grande", "Mediana", "Pequeña").forEach { size ->
+                        FilterChip(albumSize == size, onClick = { albumSize = size; preferences.edit { putString("album_size", size) } }, label = { Text(size) })
                     }
                 }
+                if (slides.isEmpty()) Text("Añade la primera lámina de tu historia.", Modifier.padding(24.dp))
+                Album(slides, story.elements, albumSize, Modifier.weight(1f),
+                    open = { slideId = it.id }, rename = { nameRequest = NameRequest("slides", it.id, null, it.name) },
+                    delete = { deleteRequest = DeleteRequest("slides", it.id, it.name) },
+                    duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } })
             } else {
-                SlideCanvas(slide,story.elements.filter { it.slideId == slide.id }, Modifier.weight(1f).fillMaxWidth(), editing = true,
-                    onSelect = { elementRequest = it }, onMove = { model.edit { saveElement(it) } })
-                Text("Toca para editar · mantén pulsado y arrastra para mover", Modifier.padding(horizontal = 12.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
-                Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                SlideCanvas(slide, story.elements.filter { it.slideId == slide.id }, Modifier.weight(1f).fillMaxWidth(), editing = true,
+                    onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y) } },
+                    onResize = { e -> model.edit { resizeElement(e.id, e.width, e.height, e.x, e.y) } }, selectedId = selectedId,
+                    showActions = actions, destinations = slides, reference = slides.find { it.id == referenceId },
+                    referenceElements = story.elements.filter { it.slideId == referenceId }, referenceOpacity = referenceOpacity,
+                    movingBackground = movingBackground, onBackgroundMove = { s -> model.edit {
+                        val current = read().slides.find { it.id == s.id }
+                        if (current != null && !current.backgroundLocked) saveSlide(current.copy(backgroundX = s.backgroundX, backgroundY = s.backgroundY))
+                    } })
+                // Fixed-height controls: selecting on DOWN cannot resize the stage and cancel a gesture.
+                Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
+                    if (selected == null) Text(if (movingBackground) "Arrastra el fondo manual" else "Toca para seleccionar · arrastra para mover", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+                    else {
+                        TextButton(onClick = { elementRequest = selected }) { Text("Editar") }
+                        TextButton(onClick = { model.edit { toggleLock(selected.id) } }) { Text(if (selected.locked) "Desbloquear" else "Bloquear") }
+                        TextButton(onClick = { model.edit { duplicateElement(selected.id) } }) { Text("Duplicar") }
+                        TextButton(onClick = { model.edit { layer(selected.id, true) } }) { Text("Al frente") }
+                        TextButton(onClick = { model.edit { layer(selected.id, false) } }) { Text("Atrás") }
+                        TextButton(onClick = { deleteRequest = DeleteRequest("elements", selected.id, "elemento") }) { Text("Eliminar") }
+                    }
+                }
+                Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
                     TextButton(onClick = { showBackground = true }) { Text("Fondo") }
-                    TextButton(onClick = { elementRequest = Element(0,slide.id,"text","",x=.1f,y=.15f + (story.elements.count { it.slideId == slide.id && it.kind == "text" } % 4) * .15f) }) { Text("+ Texto") }
-                    TextButton(onClick = { elementRequest = Element(0,slide.id,"button","",x=.1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,y=.7f,backgroundColor=0xFF6750A4.toInt(),textColor=-1) }) { Text("+ Botón") }
-                    TextButton(onClick = { play() }) { Text("▶") }
+                    TextButton(onClick = { elementRequest = Element(0, slide.id, "text", "", y = .15f, width = .6f, height = .18f) }) { Text("+ Texto") }
+                    TextButton(onClick = { elementRequest = Element(0, slide.id, "button", "", x = .1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,
+                        y = .7f, backgroundColor = 0xFF6750A4.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
+                    TextButton(onClick = { importImage("element") }) { Text("+ Imagen") }
+                    TextButton(onClick = { actions = !actions }) { Text(if (actions) "Ocultar acciones" else "Ver acciones") }
+                    TextButton(onClick = { showReference = true }) { Text("Calco") }
+                    TextButton(onClick = { movingBackground = !movingBackground }, enabled = slide.image != null && slide.backgroundMode == "manual" && !slide.backgroundLocked) { Text(if (movingBackground) "Terminar fondo" else "Mover fondo") }
+                    TextButton(onClick = { selectedId = null; movingBackground = false }) { Text("Deseleccionar") }
+                    TextButton(onClick = { nameRequest = NameRequest("layers", null, null, "") }) { Text("Elementos") }
                 }
             }
         }
     }
     nameRequest?.let { request ->
-        NameDialog(if(request.id == null) "Crear" else "Renombrar", request.initial, { nameRequest = null }) { name ->
-            model.edit { if(request.id != null) rename(request.table,request.id,name) else if(request.table == "projects") createProject(name) else createSlide(requireNotNull(request.parent),name) }
+        if (request.table == "layers") {
+            AlertDialog(onDismissRequest = { nameRequest = null }, title = { Text("Elementos · arriba primero") }, text = {
+                LazyColumn(Modifier.heightIn(max = 400.dp)) {
+                    items(story.elements.filter { it.slideId == slideId }.sortedByDescending { it.layer }, key = { it.id }) { e ->
+                        TextButton(onClick = { selectedId = e.id; nameRequest = null }) { Text("${if (e.locked) "🔒 " else ""}${if (e.kind == "image") "Imagen ${e.id}" else e.text}") }
+                    }
+                }
+            }, confirmButton = { TextButton(onClick = { nameRequest = null }) { Text("Cerrar") } })
+        } else NameDialog(if (request.id == null) "Crear" else "Renombrar", request.initial, { nameRequest = null }) { name ->
+            model.edit { if (request.id != null) rename(request.table, request.id, name) else if (request.table == "projects") createProject(name) else createSlide(requireNotNull(request.parent), name) }
             nameRequest = null
         }
     }
     deleteRequest?.let { request ->
         AlertDialog(onDismissRequest = { deleteRequest = null }, title = { Text("Eliminar ${request.name}") },
-            text = { Text(if(request.table == "projects") "Se eliminarán todas sus láminas y elementos. Esta acción no se puede deshacer." else "Se eliminarán sus elementos. Los botones que apuntan aquí quedarán sin destino.") },
-            confirmButton = { TextButton(onClick = { model.edit { delete(request.table,request.id) }; deleteRequest = null }) { Text("Eliminar") } },
+            text = { Text(if (request.table == "projects") "Se eliminarán todas sus láminas y elementos." else if (request.table == "slides") "Se eliminarán sus elementos. Los botones que apuntan aquí quedarán sin destino." else "Se eliminará el elemento seleccionado.") },
+            confirmButton = { TextButton(onClick = { model.edit { delete(request.table, request.id) }; deleteRequest = null }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("Cancelar") } })
     }
-    elementRequest?.let { element ->
-        ElementDialog(element,slides,{ elementRequest = null }, { updated -> model.edit { saveElement(updated) }; elementRequest = null },
-            { model.edit { delete("elements",element.id) }; elementRequest = null })
-    }
-    if(showBackground && slide != null) {
-        AlertDialog(onDismissRequest = { showBackground = false }, title = { Text("Fondo de la lámina") },
-            text = { Column { ColorPicker("Color sólido",slide.color) { color -> model.edit { background(slide.id,color,null) }; showBackground = false }
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = { showBackground = false; imagePicker.launch(arrayOf("image/*")) }) { Text("Elegir imagen local") }
-                Text("La imagen se copia al almacenamiento privado de TaleFrame.", style = MaterialTheme.typography.bodySmall)
-            } }, confirmButton = { TextButton(onClick = { showBackground = false }) { Text("Cerrar") } })
-    }
+    elementRequest?.let { e -> ElementDialog(e, slides, story.elements, { elementRequest = null }, { updated -> model.edit { editElement(e, updated) }; elementRequest = null }) }
+    if (showBackground && slide != null) BackgroundDialog(slide, { showBackground = false },
+        save = { s -> model.edit { editBackground(slide, s) }; showBackground = false }, import = { showBackground = false; importImage("background") })
+    if (showReference && slide != null) CalcoDialog(slides.filter { it.id != slide.id }, story.elements, referenceId, referenceOpacity,
+        { showReference = false }, { id, opacity ->
+            referenceId = id; referenceOpacity = opacity; showReference = false
+            preferences.edit { putLong("calco_slide_$slideId", id ?: 0); putFloat("calco_opacity_$slideId", opacity) }
+        })
     error?.let { message -> AlertDialog(onDismissRequest = { model.clearError() }, title = { Text("No se pudo completar el cambio") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { model.clearError() }) { Text("Aceptar") } }) }
-}
-
-@Composable
-private fun StoryCard(name: String, subtitle: String, open: () -> Unit, rename: () -> Unit, delete: () -> Unit) {
-    Card(Modifier.fillMaxWidth().clickable(onClick = open)) {
-        Column(Modifier.padding(16.dp)) {
-            Text(name,style=MaterialTheme.typography.titleMedium)
-            Text(subtitle,color=MaterialTheme.colorScheme.onSurfaceVariant)
-            Row { TextButton(onClick=rename) { Text("Renombrar") }; TextButton(onClick=delete) { Text("Eliminar") } }
-        }
-    }
-}
-
-@Composable
-private fun NameDialog(title: String, initial: String, dismiss: () -> Unit, save: (String) -> Unit) {
-    var name by remember { mutableStateOf(initial) }
-    AlertDialog(onDismissRequest=dismiss,title={ Text(title) },text={ OutlinedTextField(name,{ name=it },label={ Text("Nombre") },singleLine=true) },
-        confirmButton={ TextButton(onClick={ save(name.trim()) },enabled=name.isNotBlank()) { Text("Guardar") } },dismissButton={ TextButton(onClick=dismiss) { Text("Cancelar") } })
-}
-
-@Composable
-private fun ElementDialog(element: Element, slides: List<Slide>, dismiss: () -> Unit, save: (Element) -> Unit, delete: () -> Unit) {
-    var text by remember { mutableStateOf(element.text) }
-    var foreground by remember { mutableIntStateOf(element.textColor) }
-    var background by remember { mutableIntStateOf(element.backgroundColor) }
-    var target by remember { mutableStateOf(element.targetId) }
-    AlertDialog(onDismissRequest=dismiss,title={ Text(if(element.kind == "text") "Cuadro de texto" else "Botón") },text={
-        Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(text,{text=it},label={ Text("Texto") }, minLines=2, maxLines=5)
-            if(element.kind == "text") {
-                ColorPicker("Color del texto",foreground) { foreground=it }
-                ColorPicker("Color del cuadro",background) { background=it }
-            } else {
-                Text("Lámina de destino")
-                Row(Modifier.fillMaxWidth().clickable { target=null }) { RadioButton(target==null,{target=null}); Text("Sin destino",Modifier.padding(top=12.dp)) }
-                slides.forEach { slide -> Row(Modifier.fillMaxWidth().clickable { target=slide.id }) { RadioButton(target==slide.id,{target=slide.id}); Text(slide.name,Modifier.padding(top=12.dp)) } }
-            }
-            if(element.id != 0L) TextButton(onClick=delete) { Text("Eliminar elemento",color=MaterialTheme.colorScheme.error) }
-        }
-    },confirmButton={ TextButton(onClick={save(element.copy(text=text.trim(),textColor=foreground,backgroundColor=background,targetId=target))},enabled=text.isNotBlank()) { Text("Guardar") } },dismissButton={ TextButton(onClick=dismiss) { Text("Cancelar") } })
-}
-
-@Composable
-private fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
-    val colors = listOf(0xFFFFFFFF,0xFF000000,0xFF263238,0xFF6750A4,0xFF1565C0,0xFF008577,0xFFFFC107,0xFFE57373,0xFFFFE0B2,0xFFE1BEE7)
-    var hex by remember(selected) { mutableStateOf("%06X".format(selected and 0xFFFFFF)) }
-    val custom = hex.takeIf { it.length == 6 && it.all { c -> c in "0123456789abcdefABCDEF" } }?.toLongOrNull(16)?.let { (it or 0xFF000000).toInt() }
-    Text(label,style=MaterialTheme.typography.labelLarge)
-    colors.chunked(5).forEach { row -> Row(horizontalArrangement=Arrangement.spacedBy(8.dp),modifier=Modifier.padding(vertical=4.dp)) {
-        row.forEach { value -> val color=value.toInt(); Surface(onClick={pick(color)},color=Color(color),shape=MaterialTheme.shapes.small,modifier=Modifier.size(38.dp).semantics { contentDescription="Color #${"%06X".format(color and 0xFFFFFF)}" },border=androidx.compose.foundation.BorderStroke(if(color==selected) 3.dp else 1.dp,if(color==selected) MaterialTheme.colorScheme.primary else Color.Gray)) {} }
-    } }
-    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
-        OutlinedTextField(hex,{hex=it.take(6)},label={Text("HEX (RRGGBB)")},singleLine=true,modifier=Modifier.weight(1f))
-        TextButton(onClick={custom?.let(pick)},enabled=custom!=null) { Text("Aplicar") }
-    }
 }

@@ -20,6 +20,7 @@ class StoryPersistenceTest {
         @Suppress("DEPRECATION")
         val permissions=context.packageManager.getPackageInfo(context.packageName,android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty()
         assertFalse(permissions.contains("android.permission.INTERNET"))
+        assertEquals(0,context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_ALLOW_BACKUP)
     }
 
     @Test fun storySurvivesDatabaseRecreationAndDestinationsAreCleaned() {

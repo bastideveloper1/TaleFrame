@@ -14,7 +14,11 @@ import org.junit.runner.RunWith
 class StoryFlowTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
 
-    private fun tap(text: String) { compose.onNodeWithText(text).performClick(); compose.waitForIdle() }
+    private fun tap(text: String) {
+        val node = compose.onNodeWithText(text)
+        try { node.assertIsDisplayed() } catch (_: AssertionError) { node.performScrollTo() }
+        node.performClick(); compose.waitForIdle()
+    }
     private fun name(text: String, label: String = "Nombre") { compose.onNode(hasSetTextAction() and hasText(label)).performTextReplacement(text); tap("Guardar") }
     private fun back() { compose.runOnUiThread { compose.activity.onBackPressedDispatcher.onBackPressed() }; compose.waitForIdle() }
     private fun awaitText(text: String) { compose.waitUntil(10_000) { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() } }
@@ -34,7 +38,7 @@ class StoryFlowTest {
             compose.waitUntil(10_000) { repository.read().slides.any { it.projectId==projectId && it.color==0xFF000000.toInt() } }
             tap("+ Texto"); name("¿Quieres entrar?", "Texto"); awaitText("¿Quieres entrar?")
             compose.onNodeWithText("¿Quieres entrar?").performTouchInput {
-                down(center); advanceEventTime(700); moveBy(Offset(120f,80f)); up()
+                down(center); advanceEventTime(16); moveBy(Offset(120f,80f)); up()
             }
             compose.waitUntil(10_000) { repository.read().elements.any { it.text=="¿Quieres entrar?" && it.x>.1f && it.y>.15f } }
             back()
@@ -43,21 +47,34 @@ class StoryFlowTest {
             tap("+ Botón"); compose.onNode(hasSetTextAction() and hasText("Texto")).performTextReplacement("Volver"); tap("Lámina 1"); tap("Guardar"); awaitText("Volver")
             back()
             tap("+ Crear lámina"); name("Lámina 3"); awaitText("Lámina 3")
+            tap("Pequeña")
+            compose.activityRule.scenario.recreate(); awaitText("Pequeña")
+            compose.onNodeWithText("Pequeña").assertIsSelected()
             tap("Lámina 1")
             tap("+ Botón"); compose.onNode(hasSetTextAction() and hasText("Texto")).performTextReplacement("Entrar"); tap("Lámina 2"); tap("Guardar"); awaitText("Entrar")
             tap("+ Botón"); compose.onNode(hasSetTextAction() and hasText("Texto")).performTextReplacement("Irme"); tap("Lámina 3"); tap("Guardar"); awaitText("Irme")
             compose.onNodeWithText("Entrar").performTouchInput {
-                down(center); advanceEventTime(700); moveBy(Offset(80f,-100f)); up()
+                down(center); advanceEventTime(16); moveBy(Offset(80f,-100f)); up()
             }
             compose.onNodeWithText("Irme").performTouchInput {
-                down(center); advanceEventTime(700); moveBy(Offset(-80f,80f)); up()
+                down(center); advanceEventTime(16); moveBy(Offset(-80f,80f)); up()
             }
             compose.waitUntil(10_000) { repository.read().elements.any { it.text=="Irme" && it.y>.7f } }
+            tap("Ver acciones")
+            compose.onNodeWithText("→ Lámina 2").assertExists()
+            compose.onNodeWithText("→ Lámina 3").assertExists()
+            tap("Calco")
+            val referenceId = repository.read().slides.first { it.projectId==projectId && it.name=="Lámina 2" }.id
+            compose.onNodeWithTag("destination-$referenceId").performScrollTo().performClick()
+            tap("Guardar")
+            compose.onNodeWithText("Llegaste a la segunda lámina").assertExists()
             val saved=repository.read()
             compose.activityRule.scenario.recreate()
             awaitText("¿Quieres entrar?"); compose.onNodeWithText("Entrar").assertExists()
             assertEquals(saved,repository.read())
             tap("▶ Play")
+            compose.onNodeWithText("→ Lámina 2").assertDoesNotExist()
+            compose.onNodeWithText("Llegaste a la segunda lámina").assertDoesNotExist()
             compose.onNodeWithText("+ Texto").assertDoesNotExist()
             compose.onNodeWithText("Fondo").assertDoesNotExist()
             tap("Entrar"); awaitText("Llegaste a la segunda lámina")
