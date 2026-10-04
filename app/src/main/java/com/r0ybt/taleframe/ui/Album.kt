@@ -31,7 +31,8 @@ fun Album(slides: List<Slide>, elements: List<Element>, size: String, modifier: 
                     Text(slide.name, style = MaterialTheme.typography.titleSmall, maxLines = 2)
                     val buttons = elements.filter { it.slideId == slide.id && it.kind == "button" }
                     val targets = buttons.mapNotNull { e -> slides.indexOfFirst { it.id == e.targetId }.takeIf { it >= 0 }?.plus(1) }.distinct()
-                    Text(if (buttons.isEmpty()) "FIN" else if (targets.isEmpty()) "Sin destino" else "→ ${targets.joinToString(", ")}${if (buttons.any { it.targetId == null }) " · ?" else ""}", style = MaterialTheme.typography.labelSmall)
+                    Text(if (buttons.isEmpty()) (if (slide.autoEnabled) "Avance automático" else "FIN") else if (targets.isEmpty()) "Sin destino" else "→ ${targets.joinToString(", ")}${if (buttons.any { it.targetId == null }) " · ?" else ""}", style = MaterialTheme.typography.labelSmall)
+                    if (slide.autoEnabled) Text("⏱ ${slide.autoSeconds} s → ${slides.find { it.id == slide.autoTargetId }?.name ?: "Sin destino"}", style = MaterialTheme.typography.labelSmall)
                     if (slide.id == slides.minByOrNull { it.id }?.id) Text("Inicio", style = MaterialTheme.typography.labelSmall)
                     Box {
                         TextButton(onClick = { menu = true }, contentPadding = PaddingValues(0.dp)) { Text("Opciones") }

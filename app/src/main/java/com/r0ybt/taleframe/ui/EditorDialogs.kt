@@ -36,12 +36,16 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
 }
 
 @Composable
-fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit) {
+fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}) {
     var draft by remember(element.id) { mutableStateOf(element) }
     AlertDialog(onDismissRequest = dismiss, title = { Text(when (element.kind) { "image" -> "Imagen"; "button" -> "Botón"; else -> "Cuadro de texto" }) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (element.kind != "image") OutlinedTextField(draft.text, { draft = draft.copy(text = it) }, label = { Text("Texto") }, minLines = 2, maxLines = 5)
-            else Text("PNG/WebP conservan transparencia. Los cambios se guardan al confirmar.", style = MaterialTheme.typography.bodySmall)
+            else {
+                TextButton(onClick = replace) { Text("Reemplazar recurso") }
+                MediaControls(draft.media) { draft = draft.copy(media = it) }
+                if (draft.media.type == "image" || draft.media.type == "slideshow") TextButton(onClick = { save(draft); addFrames() }) { Text("Añadir imágenes a la secuencia") }
+            }
             if (element.kind == "text") {
                 ColorPicker("Color del texto", draft.textColor) { draft = draft.copy(textColor = it) }
                 ColorPicker("Color del cuadro", draft.backgroundColor) { draft = draft.copy(backgroundColor = it) }
@@ -61,6 +65,7 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
             if (element.kind == "button") {
                 Text("Lámina de destino")
                 DestinationPicker(slides, elements, draft.targetId, { draft = draft.copy(targetId = it) })
+                TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
             }
         }
     }, confirmButton = { TextButton(onClick = { save(draft.copy(text = draft.text.trim())) }, enabled = draft.kind == "image" || draft.text.isNotBlank()) { Text("Guardar") } },
@@ -68,13 +73,17 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
 }
 
 @Composable
-fun BackgroundDialog(slide: Slide, dismiss: () -> Unit, save: (Slide) -> Unit, import: () -> Unit) {
+fun BackgroundDialog(slide: Slide, dismiss: () -> Unit, save: (Slide) -> Unit, import: () -> Unit, importGif: () -> Unit = {}, importVideo: () -> Unit = {}) {
     var draft by remember(slide.id) { mutableStateOf(slide) }
     AlertDialog(onDismissRequest = dismiss, title = { Text("Fondo de la lámina") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            ColorPicker("Color sólido", draft.color) { save(draft.copy(color = it, image = null)) }
+            ColorPicker("Color sólido", draft.color) { save(draft.copy(color = it, image = null, media = MediaOptions())) }
             Button(onClick = import) { Text("Elegir imagen local") }
+            TextButton(onClick = importGif) { Text("Elegir GIF local") }
+            TextButton(onClick = importVideo) { Text("Elegir video local") }
             if (draft.image != null) {
+                MediaControls(draft.media) { draft = draft.copy(media = it) }
+                TextButton(onClick = { draft = draft.copy(image = null, media = MediaOptions()) }) { Text("Eliminar recurso de fondo") }
                 SlidePreview(draft, emptyList(), Modifier.fillMaxWidth().heightIn(max = 180.dp))
                 listOf("fit" to "Encajar / Fit", "fill" to "Rellenar / Fill", "manual" to "Ajuste manual").forEach { (mode, label) ->
                     Row(Modifier.fillMaxWidth().clickable { if (!draft.backgroundLocked) draft = draft.copy(backgroundMode = mode) }) {

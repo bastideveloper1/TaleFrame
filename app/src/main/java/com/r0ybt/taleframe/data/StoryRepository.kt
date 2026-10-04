@@ -6,12 +6,14 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.media.MediaMetadataRetriever
+import java.security.MessageDigest
 import java.io.File
 import java.util.UUID
 
 /** SQLite stays private. All multi-row operations use transactions and stable IDs. */
 class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
-    SQLiteOpenHelper(context.applicationContext, databaseName, null, 2) {
+    SQLiteOpenHelper(context.applicationContext, databaseName, null, 3) {
     private val imageDir = File(context.filesDir, if (databaseName == "taleframe.db") "backgrounds" else "backgrounds-$databaseName").apply { mkdirs() }
     private val resolver = context.contentResolver
 
@@ -25,6 +27,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             background_scale REAL NOT NULL DEFAULT 1, background_x REAL NOT NULL DEFAULT 0,
             background_y REAL NOT NULL DEFAULT 0, background_locked INTEGER NOT NULL DEFAULT 0)""")
         createElements(db)
+        addMediaColumns(db)
         db.execSQL("CREATE INDEX slides_project ON slides(project_id)")
         db.execSQL("CREATE INDEX elements_slide ON elements(slide_id)")
     }
@@ -42,7 +45,8 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion == 1 && newVersion == 2) {
+        require(oldVersion in 1..2 && newVersion == 3)
+        if (oldVersion == 1) {
             // SQLiteOpenHelper wraps migration in a transaction. Never drop projects/slides.
             db.execSQL("ALTER TABLE slides ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE slides ADD COLUMN background_mode TEXT NOT NULL DEFAULT 'fill'")
@@ -63,7 +67,14 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             db.execSQL("DELETE FROM sqlite_sequence WHERE name='elements'")
             db.execSQL("INSERT INTO sqlite_sequence(name,seq) VALUES('elements',?)", arrayOf(oldSequence))
             db.execSQL("CREATE INDEX elements_slide ON elements(slide_id)")
-        } else error("Migración no disponible: $oldVersion → $newVersion")
+        }
+        addMediaColumns(db)
+    }
+
+    private fun addMediaColumns(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE slides ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'")
+        db.execSQL("ALTER TABLE slides ADD COLUMN auto_target_id INTEGER REFERENCES slides(id) ON DELETE SET NULL")
+        db.execSQL("ALTER TABLE elements ADD COLUMN settings TEXT NOT NULL DEFAULT '{}'")
     }
 
     fun read(): Story {
@@ -74,11 +85,11 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         db.rawQuery("SELECT id,name FROM projects ORDER BY id", null).use { c ->
             while (c.moveToNext()) projects += Project(c.getLong(0), c.getString(1))
         }
-        db.rawQuery("SELECT id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked FROM slides ORDER BY project_id,sort_order,id", null).use { c ->
-            while (c.moveToNext()) slides += Slide(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3), c.getString(4), c.getInt(5), c.getString(6), c.getFloat(7), c.getFloat(8), c.getFloat(9), c.getInt(10) != 0)
+        db.rawQuery("SELECT id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id FROM slides ORDER BY project_id,sort_order,id", null).use { c ->
+            while (c.moveToNext()) slides += Slide(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3), c.getString(4), c.getInt(5), c.getString(6), c.getFloat(7), c.getFloat(8), c.getFloat(9), c.getInt(10) != 0).withSettings(c.getString(11), if (c.isNull(12)) null else c.getLong(12))
         }
-        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
-            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16))
+        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
+            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16)).withSettings(c.getString(17))
         }
         return Story(projects, slides, elements)
     }
@@ -106,18 +117,21 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             }
         }
         require(e.kind != "image" || e.image != null)
+        require(e.media.type != "slideshow" || e.media.frames.isNotEmpty()) { "La secuencia necesita al menos una imagen" }
         val layer = if (e.id == 0L) read().elements.filter { it.slideId == e.slideId }.maxOfOrNull { it.layer }?.plus(1) ?: 0 else e.layer
         val values = ContentValues().apply {
-            put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
+            put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
             put("x", boundedPosition(e.x)); put("y", boundedPosition(e.y))
             put("text_color", e.textColor); put("background_color", e.backgroundColor); put("target_id", e.targetId)
-            put("image", e.image); put("width", boundedValue(e.width, 0f, 1f, 0f)); put("height", boundedValue(e.height, 0f, 1f, 0f))
+            put("image", if (e.media.type == "slideshow") e.media.frames.first() else e.image); put("width", boundedValue(e.width, 0f, 1f, 0f)); put("height", boundedValue(e.height, 0f, 1f, 0f))
             put("rotation", boundedValue(e.rotation, -180f, 180f, 0f)); put("flipped", e.flipped)
             put("opacity", boundedPosition(e.opacity)); put("locked", e.locked); put("layer_order", layer)
         }
-        return if (e.id == 0L) writableDatabase.insertOrThrow("elements", null, values) else {
+        val result = if (e.id == 0L) writableDatabase.insertOrThrow("elements", null, values) else {
             writableDatabase.update("elements", values, "id=?", arrayOf(e.id.toString())); e.id
         }
+        if (!writableDatabase.inTransaction()) cleanImages()
+        return result
     }
     /** Apply dialog differences to the latest row, preserving already queued gestures/layers. */
     fun editElement(before: Element, edited: Element) {
@@ -133,6 +147,9 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             rotation = if (before.rotation != edited.rotation) edited.rotation else current.rotation,
             flipped = if (before.flipped != edited.flipped) edited.flipped else current.flipped,
             opacity = if (before.opacity != edited.opacity) edited.opacity else current.opacity,
+            image = if (before.image != edited.image) edited.image else current.image,
+            media = if (before.media != edited.media) edited.media else current.media,
+            transition = if (before.transition != edited.transition) edited.transition else current.transition,
             locked = if (before.locked != edited.locked) edited.locked else current.locked
         ))
     }
@@ -203,13 +220,23 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             backgroundScale = if (before.backgroundScale != edited.backgroundScale) edited.backgroundScale else current.backgroundScale,
             backgroundX = if (before.backgroundX != edited.backgroundX) edited.backgroundX else current.backgroundX,
             backgroundY = if (before.backgroundY != edited.backgroundY) edited.backgroundY else current.backgroundY,
+            media = if (before.media != edited.media) edited.media else current.media,
+            audio = if (before.audio != edited.audio) edited.audio else current.audio,
+            audioRevision = if (before.audioRevision != edited.audioRevision) edited.audioRevision else current.audioRevision,
+            audioLoop = if (before.audioLoop != edited.audioLoop) edited.audioLoop else current.audioLoop,
+            audioVolume = if (before.audioVolume != edited.audioVolume) edited.audioVolume else current.audioVolume,
+            autoEnabled = if (before.autoEnabled != edited.autoEnabled) edited.autoEnabled else current.autoEnabled,
+            autoSeconds = if (before.autoSeconds != edited.autoSeconds) edited.autoSeconds else current.autoSeconds,
+            autoTargetId = if (before.autoTargetId != edited.autoTargetId) edited.autoTargetId else current.autoTargetId,
+            transition = if (before.transition != edited.transition) edited.transition else current.transition,
             backgroundLocked = if (before.backgroundLocked != edited.backgroundLocked) edited.backgroundLocked else current.backgroundLocked
         ))
     }
     fun saveSlide(s: Slide) {
+        if (s.autoTargetId != null) require(read().slides.any { it.id == s.autoTargetId && it.projectId == s.projectId }) { "El destino debe pertenecer al proyecto" }
         require(s.backgroundMode in listOf("fit", "fill", "manual"))
         writableDatabase.update("slides", ContentValues().apply {
-            put("color", s.color); put("image", s.image); put("sort_order", s.order)
+            put("settings", s.settings()); put("auto_target_id", s.autoTargetId); put("color", s.color); put("image", s.image); put("sort_order", s.order)
             put("background_mode", s.backgroundMode); put("background_scale", boundedValue(s.backgroundScale, .25f, 4f, 1f))
             put("background_x", boundedValue(s.backgroundX, -1f, 1f, 0f)); put("background_y", boundedValue(s.backgroundY, -1f, 1f, 0f))
             put("background_locked", s.backgroundLocked)
@@ -224,7 +251,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
 
     // Private copies support transparent PNG/WebP without permanent provider permissions.
-    fun importImage(uri: Uri): String {
+    fun importImage(uri: Uri, gif: Boolean = false): String {
         val file = File(imageDir, UUID.randomUUID().toString())
         try {
             resolver.openInputStream(uri)?.use { input -> file.outputStream().use { output ->
@@ -238,13 +265,66 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
             val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.path, options)
             require(options.outWidth > 0 && options.outHeight > 0) { "El archivo no es una imagen compatible" }
-            return file.path
+            if (gif) {
+                val header = file.inputStream().use { input -> val bytes = ByteArray(6); input.read(bytes); String(bytes, Charsets.US_ASCII) }
+                require(header == "GIF87a" || header == "GIF89a") { "El archivo no es un GIF" }
+                require(options.outWidth <= 4096 && options.outHeight <= 4096 && options.outWidth.toLong() * options.outHeight <= 8_000_000) { "GIF demasiado grande (máximo 8 megapíxeles y 4096 px por lado)" }
+            }
+            return deduplicate(file)
         } catch (e: Exception) { file.delete(); throw e }
     }
-    private fun cleanImages() {
-        val used = mutableSetOf<String>()
-        readableDatabase.rawQuery("SELECT image FROM slides WHERE image IS NOT NULL UNION SELECT image FROM elements WHERE image IS NOT NULL", null).use {
-            while (it.moveToNext()) used += it.getString(0)
+    fun importMedia(uri: Uri, type: String): String {
+        if (type == "image" || type == "gif") return importImage(uri, type == "gif")
+        require(type == "video" || type == "audio")
+        val file = File(imageDir, UUID.randomUUID().toString())
+        try {
+            resolver.openInputStream(uri)?.use { input -> file.outputStream().use { output ->
+                val buffer = ByteArray(8192); var total = 0L
+                while (true) {
+                    val count = input.read(buffer); if (count < 0) break
+                    total += count
+                    require(total <= (if (type == "video") 500L else 100L) * 1024 * 1024) { "Archivo demasiado grande (video: 500 MB; audio: 100 MB)" }
+                    output.write(buffer, 0, count)
+                }
+            } } ?: error("No se pudo abrir el archivo")
+            val metadata = MediaMetadataRetriever()
+            try {
+                metadata.setDataSource(file.path)
+                val key = if (type == "video") MediaMetadataRetriever.METADATA_KEY_HAS_VIDEO else MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO
+                require(metadata.extractMetadata(key) == "yes") { "El archivo no contiene $type compatible" }
+            } finally { metadata.release() }
+            return deduplicate(file)
+        } catch (e: Exception) {
+            file.delete()
+            throw IllegalArgumentException("No se pudo importar el recurso: incompatible, dañado o inaccesible. Máximo: video 500 MB; audio 100 MB.", e)
+        }
+    }
+    private fun deduplicate(file: File): String {
+        val hash = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(8192)
+            while (true) { val n = input.read(buffer); if (n < 0) break; hash.update(buffer, 0, n) }
+        }
+        val digest = hash.digest()
+        val destination = File(imageDir, digest.joinToString("") { "%02x".format(it) })
+        if (destination.exists()) {
+            // A damaged shared copy must never replace the newly validated import.
+            val existing = MessageDigest.getInstance("SHA-256")
+            destination.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) { val n = input.read(buffer); if (n < 0) break; existing.update(buffer, 0, n) }
+            }
+            if (!existing.digest().contentEquals(digest)) return file.path
+            file.delete()
+        } else check(file.renameTo(destination)) { "No se pudo guardar el recurso" }
+        return destination.path
+    }
+    /** Called once all new references have been attached, never in the middle of imports. */
+    fun cleanImages() {
+        val story = read()
+        val used = buildSet {
+            story.slides.forEach { s -> s.image?.let(::add); s.audio?.let(::add); addAll(s.media.frames) }
+            story.elements.forEach { e -> e.image?.let(::add); addAll(e.media.frames) }
         }
         imageDir.listFiles()?.filter { it.path !in used }?.forEach { it.delete() }
     }

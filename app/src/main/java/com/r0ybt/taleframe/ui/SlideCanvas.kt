@@ -1,8 +1,5 @@
 package com.r0ybt.taleframe.ui
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,7 +16,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -33,15 +29,6 @@ import androidx.compose.ui.unit.sp
 import com.r0ybt.taleframe.data.*
 import kotlin.math.roundToInt
 
-@Composable
-fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier, navigate: (Long) -> Unit) {
-    Box(modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-        Crossfade(targetState = slide, animationSpec = tween(300), label = "Cambio de lámina") { current ->
-            if (current != null) SlideCanvas(current, elements.filter { it.slideId == current.id }, Modifier.fillMaxSize(), onNavigate = navigate)
-        }
-    }
-}
-
 /** Only the stage owns editor pointer events. Selection never competes with a tap dialog. */
 @Composable
 fun SlideCanvas(
@@ -50,7 +37,7 @@ fun SlideCanvas(
     selectedId: Long? = null, onResize: (Element) -> Unit = {}, showActions: Boolean = false,
     destinations: List<Slide> = emptyList(), reference: Slide? = null, referenceElements: List<Element> = emptyList(),
     referenceOpacity: Float = .35f, movingBackground: Boolean = false, onBackgroundMove: (Slide) -> Unit = {},
-    preview: Boolean = false
+    preview: Boolean = false, onAction: ((Long, Transition) -> Unit)? = null
 ) {
     BoxWithConstraints(modifier.background(Color(0xFF101014)), contentAlignment = Alignment.Center) {
         val width = minOf(maxWidth, maxHeight * .75f)
@@ -161,7 +148,7 @@ fun SlideCanvas(
                 Composition(reference, referenceElements, stage, emptyMap(), null, false, null, false, emptyList(), true, {})
             }
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editing && reference != null) 1f - referenceOpacity.coerceIn(0f, .9f) else 1f }) {
-                Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate) { id, size -> measured[id] = size }
+                Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate, onAction) { id, size -> measured[id] = size }
             }
         }
     }
@@ -171,22 +158,22 @@ fun SlideCanvas(
 private fun Composition(
     slide: Slide, elements: List<Element>, stage: IntSize, measured: Map<Long, IntSize>, draft: Element?,
     editing: Boolean, selectedId: Long?, showActions: Boolean, destinations: List<Slide>, preview: Boolean,
-    navigate: (Long) -> Unit, measure: (Long, IntSize) -> Unit = { _, _ -> }
+    navigate: (Long) -> Unit, action: ((Long, Transition) -> Unit)? = null, measure: (Long, IntSize) -> Unit = { _, _ -> }
 ) {
     Box(Modifier.fillMaxSize().background(Color(slide.color))) {
-        val background = localImage(slide.image, if (preview) 384 else 2048)
-        background?.let {
-            Image(it, contentDescription = null, contentScale = if (slide.backgroundMode == "fill") ContentScale.Crop else ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    if (slide.backgroundMode == "manual") {
-                        scaleX = slide.backgroundScale; scaleY = slide.backgroundScale
-                        translationX = slide.backgroundX * stage.width; translationY = slide.backgroundY * stage.height
-                    }
-                })
-        }
+        if (slide.image != null) LocalMedia(slide.image, slide.media,
+            Modifier.fillMaxSize().graphicsLayer {
+                if (slide.backgroundMode == "manual") {
+                    scaleX = slide.backgroundScale; scaleY = slide.backgroundScale
+                    translationX = slide.backgroundX * stage.width; translationY = slide.backgroundY * stage.height
+                }
+            }, preview, slide.backgroundMode == "fill", editing)
+        SlideAudio(slide, preview || editing)
+        if (editing && slide.autoEnabled) Text("⏱ ${slide.autoSeconds} s → ${destinations.find { it.id == slide.autoTargetId }?.name ?: "Sin destino"}", color = Color.White,
+            modifier = Modifier.align(Alignment.TopEnd).background(Color(0xAA000000)))
         elements.sortedWith(compareBy<Element> { it.layer }.thenBy { it.id }).forEach { original -> key(original.id) {
             val e = draft?.takeIf { it.id == original.id } ?: original
-            ElementVisual(e, stage, measured[e.id] ?: IntSize.Zero, editing, selectedId == e.id, preview, navigate) { measure(e.id, it) }
+            ElementVisual(e, stage, measured[e.id] ?: IntSize.Zero, editing, selectedId == e.id, preview, { target -> if (action != null) action(target, e.transition) else navigate(target) }) { measure(e.id, it) }
             if (editing && showActions && e.kind == "button") {
                 val size = measured[e.id] ?: IntSize.Zero
                 val b = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), size.width.toFloat(), size.height.toFloat())
@@ -214,8 +201,7 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
         .then(if (selected && editing) Modifier.border(2.dp, if (e.locked) Color(0xFFFFC107) else Color(0xFFC8B6FF)) else Modifier)
         .then(click)) {
         if (e.kind == "image") {
-            val image = localImage(e.image, if (preview) 256 else 1536)
-            image?.let { Image(it, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().graphicsLayer { alpha = e.opacity }) }
+            LocalMedia(e.image, e.media, Modifier.fillMaxSize().graphicsLayer { alpha = e.opacity }, preview, editing = editing)
         } else {
             Box(Modifier.then(if (e.width > 0 && e.height > 0) Modifier.fillMaxSize() else Modifier)
                 .graphicsLayer { alpha = e.opacity }.clip(RoundedCornerShape(if (e.kind == "button") 10.dp else 4.dp)).background(Color(e.backgroundColor)).padding(padding)) {

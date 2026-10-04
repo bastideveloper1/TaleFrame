@@ -43,6 +43,9 @@ fun TaleFrameApp(model: StoryViewModel) {
     var deleteRequest by remember { mutableStateOf<DeleteRequest?>(null) }
     var elementRequest by remember { mutableStateOf<Element?>(null) }
     var showBackground by remember { mutableStateOf(false) }
+    var showBehavior by remember { mutableStateOf(false) }
+    var pickerElement by rememberSaveable { mutableStateOf<Long?>(null) }
+    var pickerType by rememberSaveable { mutableStateOf("image") }
     var showReference by remember { mutableStateOf(false) }
     var pickerSlide by rememberSaveable { mutableStateOf<Long?>(null) }
     var pickerKind by rememberSaveable { mutableStateOf("background") }
@@ -53,16 +56,46 @@ fun TaleFrameApp(model: StoryViewModel) {
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val id = pickerSlide
         val kind = pickerKind
+        val type = pickerType
+        val elementId = pickerElement
         if (uri != null && id != null) model.edit {
             val current = read().slides.find { it.id == id }
             if (current != null) {
-                val path = importImage(uri)
-                if (kind == "background") background(id, current.color, path)
-                else saveElement(Element(0, id, "image", "", image = path, width = .4f, height = .4f))
+                val path = importMedia(uri, type)
+                when (kind) {
+                    "background" -> saveSlide(current.copy(image = path, media = MediaOptions(type = type, revision = current.media.revision + 1)))
+                    "audio" -> saveSlide(current.copy(audio = path, audioRevision = current.audioRevision + 1))
+                    "replace" -> {
+                        val element = read().elements.find { it.id == elementId }
+                        if (element != null) saveElement(element.copy(image = path, media = MediaOptions(type = type, revision = element.media.revision + 1))) else cleanImages()
+                    }
+                    else -> saveElement(Element(0, id, "image", "", image = path, width = .4f, height = .4f, media = MediaOptions(type = type)))
+                }
             }
         }
     }
-    fun importImage(kind: String) { pickerSlide = slideId; pickerKind = kind; imagePicker.launch(arrayOf("image/png", "image/webp", "image/jpeg")) }
+    fun importImage(kind: String, type: String = "image", element: Long? = null) {
+        pickerSlide = slideId; pickerKind = kind; pickerType = type; pickerElement = element
+        imagePicker.launch(when (type) { "video" -> arrayOf("video/*"); "audio" -> arrayOf("audio/*"); "gif" -> arrayOf("image/gif"); else -> arrayOf("image/png", "image/webp", "image/jpeg") })
+    }
+    val sequencePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val id = pickerSlide; val elementId = pickerElement
+        if (uris.isNotEmpty() && id != null) model.edit {
+            val existing = read().elements.find { it.id == elementId && it.slideId == id }
+            if (read().slides.any { it.id == id }) {
+                try {
+                    val paths = uris.map { importImage(it) }
+                    val frames = if (existing == null) paths else (existing.media.frames.ifEmpty { listOfNotNull(existing.image) } + paths)
+                    val element = existing ?: Element(0, id, "image", "", width = .4f, height = .4f)
+                    saveElement(element.copy(image = frames.first(), media = element.media.copy(type = "slideshow", frames = frames)))
+                } catch (e: Exception) { cleanImages(); throw e }
+            }
+        }
+    }
+    fun importSequence(element: Long? = null) {
+        pickerSlide = slideId; pickerElement = element
+        sequencePicker.launch(arrayOf("image/png", "image/webp", "image/jpeg"))
+    }
     fun back() {
         when { playing -> playing = false; slideId != null -> slideId = null; else -> projectId = null }
     }
@@ -140,6 +173,10 @@ fun TaleFrameApp(model: StoryViewModel) {
                     TextButton(onClick = { elementRequest = Element(0, slide.id, "button", "", x = .1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,
                         y = .7f, backgroundColor = 0xFF6750A4.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
                     TextButton(onClick = { importImage("element") }) { Text("+ Imagen") }
+                    TextButton(onClick = { importImage("element", "gif") }) { Text("+ GIF") }
+                    TextButton(onClick = { importImage("element", "video") }) { Text("+ Video") }
+                    TextButton(onClick = { importSequence() }) { Text("+ Secuencia") }
+                    TextButton(onClick = { showBehavior = true }) { Text("Audio / Tiempo") }
                     TextButton(onClick = { actions = !actions }) { Text(if (actions) "Ocultar acciones" else "Ver acciones") }
                     TextButton(onClick = { showReference = true }) { Text("Calco") }
                     TextButton(onClick = { movingBackground = !movingBackground }, enabled = slide.image != null && slide.backgroundMode == "manual" && !slide.backgroundLocked) { Text(if (movingBackground) "Terminar fondo" else "Mover fondo") }
@@ -169,9 +206,16 @@ fun TaleFrameApp(model: StoryViewModel) {
             confirmButton = { TextButton(onClick = { model.edit { delete(request.table, request.id) }; deleteRequest = null }) { Text("Eliminar") } },
             dismissButton = { TextButton(onClick = { deleteRequest = null }) { Text("Cancelar") } })
     }
-    elementRequest?.let { e -> ElementDialog(e, slides, story.elements, { elementRequest = null }, { updated -> model.edit { editElement(e, updated) }; elementRequest = null }) }
+    elementRequest?.let { e -> ElementDialog(e, slides, story.elements, { elementRequest = null }, { updated -> model.edit { editElement(e, updated) }; elementRequest = null },
+        replace = { elementRequest = null; importImage("replace", e.media.type.takeIf { it != "slideshow" } ?: "image", e.id) },
+        addFrames = { importSequence(e.id) }) }
     if (showBackground && slide != null) BackgroundDialog(slide, { showBackground = false },
-        save = { s -> model.edit { editBackground(slide, s) }; showBackground = false }, import = { showBackground = false; importImage("background") })
+        save = { s -> model.edit { editBackground(slide, s) }; showBackground = false }, import = { showBackground = false; importImage("background") },
+        importGif = { showBackground = false; importImage("background", "gif") },
+        importVideo = { showBackground = false; importImage("background", "video") })
+    if (showBehavior && slide != null) SlideBehaviorDialog(slide, slides, story.elements, { showBehavior = false },
+        save = { updated -> model.edit { editBackground(slide, updated) }; showBehavior = false },
+        importAudio = { showBehavior = false; importImage("audio", "audio") })
     if (showReference && slide != null) CalcoDialog(slides.filter { it.id != slide.id }, story.elements, referenceId, referenceOpacity,
         { showReference = false }, { id, opacity ->
             referenceId = id; referenceOpacity = opacity; showReference = false
