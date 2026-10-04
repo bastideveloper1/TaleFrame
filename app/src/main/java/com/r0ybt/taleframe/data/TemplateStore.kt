@@ -76,7 +76,7 @@ class TemplateStore(private val repo:StoryRepository) {
         fun resource(value:Long?)=value?.takeIf {v->story.resources.any {it.id==v && it.projectId==projectId}}
         db.beginTransaction()
         try {
-            id=repo.createSlide(projectId,name)
+            id=repo.createSlide(projectId,name,synchronizeNavigation=false)
             val created=repo.read().slides.first {it.id==id}
             repo.saveSlide(t.slide.copy(id=id,projectId=projectId,name=name,order=created.order,draft=false,autoEnabled=false,autoTargetId=null,backgroundResourceId=resource(t.slide.backgroundResourceId),audioResourceId=resource(t.slide.audioResourceId)))
             t.elements.sortedBy {it.layer}.forEach {e->
@@ -84,6 +84,7 @@ class TemplateStore(private val repo:StoryRepository) {
                 val expression=e.expressionId?.takeIf {v->story.expressions.any {it.id==v && it.characterId==character}}
                 repo.saveElement(e.copy(id=0,slideId=id,targetId=null,resourceId=resource(e.resourceId),characterId=character,expressionId=expression,presetId=e.presetId?.takeIf {v->story.presets.any {it.id==v && it.projectId==projectId}},expressionFrames=e.expressionFrames.filter {v->story.expressions.any {it.id==v && it.characterId==character}}))
             }
+            repo.syncBaseNavigation(projectId)
             db.setTransactionSuccessful()
         } finally {db.endTransaction()}
         return id

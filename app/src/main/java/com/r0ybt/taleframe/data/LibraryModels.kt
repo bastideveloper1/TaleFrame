@@ -65,3 +65,5 @@ fun styledElement(slideId: Long, preset: Preset?, speaker: String = "", characte
         style=preset?.style ?: VisualStyle(shape="rounded"), transition=preset?.transition ?: Transition(),
         speakerName=speaker, characterId=characterId, presetId=preset?.id)
 }
+
+fun normalizedCharacterName(name:String):String = name.trim().replace(Regex("\\s+"), " ").lowercase(java.util.Locale.ROOT)

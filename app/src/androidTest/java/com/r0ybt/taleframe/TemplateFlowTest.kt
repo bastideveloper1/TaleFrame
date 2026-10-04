@@ -36,7 +36,7 @@ class TemplateFlowTest {
             back();tap("+ Crear lámina");compose.onNode(hasSetTextAction() and hasText("Nombre")).performTextReplacement("Página reutilizada");tap("Mi collage");tap("Guardar");waitText("Página reutilizada")
             val next=repo.read().slides.first {it.projectId==project && it.name=="Página reutilizada"}
             val placed=repo.read().elements.filter {it.slideId==next.id};assertEquals(4,placed.size);assertTrue(placed.all {it.panel!=null});assertEquals(1,placed.count {it.resourceId==r});assertFalse(next.draft)
-            tap("Página reutilizada");tap("Reproducir desde esta lámina");compose.onNodeWithText("+ Texto").assertDoesNotExist();compose.onNodeWithText("Texto no cabe").assertDoesNotExist();back();waitText("+ Texto")
+            tap("Página reutilizada");compose.onAllNodesWithText("▶ Probar desde aquí")[0].performClick();compose.onNodeWithText("+ Texto").assertDoesNotExist();compose.onNodeWithText("Texto no cabe").assertDoesNotExist();back();waitText("+ Texto")
         } finally {compose.activityRule.scenario.close();project?.let {repo.delete("projects",it)};repo.close();file.delete()}
     }
 }

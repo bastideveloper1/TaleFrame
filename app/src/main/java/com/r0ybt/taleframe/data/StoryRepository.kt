@@ -14,7 +14,7 @@ import java.util.UUID
 
 /** SQLite stays private. All multi-row operations use transactions and stable IDs. */
 class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
-    SQLiteOpenHelper(context.applicationContext, databaseName, null, 5) {
+    SQLiteOpenHelper(context.applicationContext, databaseName, null, 6) {
     private val imageDir = File(context.filesDir, if (databaseName == "taleframe.db") "backgrounds" else "backgrounds-$databaseName").apply { mkdirs() }
     val library = LibraryStore(this)
     val templates = TemplateStore(this)
@@ -33,6 +33,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         addMediaColumns(db)
         LibraryStore.createSchema(db)
         TemplateStore.createSchema(db)
+        addNavigationColumns(db)
         db.execSQL("CREATE INDEX slides_project ON slides(project_id)")
         db.execSQL("CREATE INDEX elements_slide ON elements(slide_id)")
     }
@@ -50,7 +51,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        require(oldVersion in 1..4 && newVersion == 5)
+        require(oldVersion in 1..5 && newVersion == 6)
         if (oldVersion == 1) {
             // SQLiteOpenHelper wraps migration in a transaction. Never drop projects/slides.
             db.execSQL("ALTER TABLE slides ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
@@ -75,7 +76,13 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         }
         if (oldVersion < 3) addMediaColumns(db)
         if(oldVersion < 4) { LibraryStore.createSchema(db); LibraryStore.backfill(db) }
-        TemplateStore.createSchema(db)
+        if(oldVersion < 5) TemplateStore.createSchema(db)
+        addNavigationColumns(db)
+    }
+
+    private fun addNavigationColumns(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE projects ADD COLUMN automatic_base_navigation INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("ALTER TABLE elements ADD COLUMN base_navigation TEXT DEFAULT NULL CHECK(base_navigation IS NULL OR (kind='button' AND base_navigation IN ('previous','next')))")
     }
 
     private fun addMediaColumns(db: SQLiteDatabase) {
@@ -89,14 +96,14 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         val projects = mutableListOf<Project>()
         val slides = mutableListOf<Slide>()
         val elements = mutableListOf<Element>()
-        db.rawQuery("SELECT id,name,cover_resource_id,initial_slide_id,skip_drafts FROM projects ORDER BY id", null).use { c ->
-            while (c.moveToNext()) projects += Project(c.getLong(0), c.getString(1),if(c.isNull(2)) null else c.getLong(2),if(c.isNull(3)) null else c.getLong(3),c.getInt(4)!=0)
+        db.rawQuery("SELECT id,name,cover_resource_id,initial_slide_id,skip_drafts,automatic_base_navigation FROM projects ORDER BY id", null).use { c ->
+            while (c.moveToNext()) projects += Project(c.getLong(0), c.getString(1),if(c.isNull(2)) null else c.getLong(2),if(c.isNull(3)) null else c.getLong(3),c.getInt(4)!=0,c.getInt(5)!=0)
         }
         db.rawQuery("SELECT id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id,background_resource_id,audio_resource_id,draft FROM slides ORDER BY project_id,sort_order,id", null).use { c ->
             while (c.moveToNext()) slides += Slide(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3), c.getString(4), c.getInt(5), c.getString(6), c.getFloat(7), c.getFloat(8), c.getFloat(9), c.getInt(10) != 0).withSettings(c.getString(11), if (c.isNull(12)) null else c.getLong(12)).copy(backgroundResourceId = if(c.isNull(13)) null else c.getLong(13), audioResourceId = if(c.isNull(14)) null else c.getLong(14),draft=c.getInt(15)!=0)
         }
-        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings,resource_id,character_id,expression_id,preset_id FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
-            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16)).withSettings(c.getString(17)).copy(resourceId=if(c.isNull(18)) null else c.getLong(18),characterId=if(c.isNull(19)) null else c.getLong(19),expressionId=if(c.isNull(20)) null else c.getLong(20),presetId=if(c.isNull(21)) null else c.getLong(21))
+        db.rawQuery("SELECT id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings,resource_id,character_id,expression_id,preset_id,base_navigation FROM elements ORDER BY slide_id,layer_order,id", null).use { c ->
+            while (c.moveToNext()) elements += Element(c.getLong(0), c.getLong(1), c.getString(2), c.getString(3), c.getFloat(4), c.getFloat(5), c.getInt(6), c.getInt(7), if (c.isNull(8)) null else c.getLong(8), c.getString(9), c.getFloat(10), c.getFloat(11), c.getFloat(12), c.getInt(13) != 0, c.getFloat(14), c.getInt(15) != 0, c.getInt(16)).withSettings(c.getString(17)).copy(resourceId=if(c.isNull(18)) null else c.getLong(18),characterId=if(c.isNull(19)) null else c.getLong(19),expressionId=if(c.isNull(20)) null else c.getLong(20),presetId=if(c.isNull(21)) null else c.getLong(21),baseNavigation=c.getString(22))
         }
         return templates.fill(library.fill(Story(projects, slides, elements)))
     }
@@ -106,10 +113,17 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         transaction { id=insertOrThrow("projects", null, ContentValues().apply { put("name", name.trim()) });LibraryStore.seedNarrator(this,id) }
         return id
     }
-    fun createSlide(projectId: Long, name: String): Long = writableDatabase.insertOrThrow("slides", null, ContentValues().apply {
-        put("project_id", projectId); put("name", name.trim())
-        put("sort_order", readableDatabase.rawQuery("SELECT COALESCE(MAX(sort_order)+1,0) FROM slides WHERE project_id=?",arrayOf(projectId.toString())).use { it.moveToFirst();it.getInt(0) })
-    })
+    fun createSlide(projectId: Long, name: String, synchronizeNavigation:Boolean=true): Long {
+        var id=0L
+        transaction {
+            id=insertOrThrow("slides",null,ContentValues().apply {
+                put("project_id",projectId);put("name",name.trim())
+                put("sort_order",rawQuery("SELECT COALESCE(MAX(sort_order)+1,0) FROM slides WHERE project_id=?",arrayOf(projectId.toString())).use {it.moveToFirst();it.getInt(0)})
+            })
+            if(synchronizeNavigation) syncBaseNavigation(projectId)
+        }
+        return id
+    }
     fun setCover(projectId: Long, resourceId: Long?) {
         if(resourceId!=null) readableDatabase.rawQuery("SELECT 1 FROM resources WHERE id=? AND project_id=? AND type='image'",arrayOf(resourceId.toString(),projectId.toString())).use {require(it.moveToFirst()) {"La portada debe ser una imagen de este proyecto"}}
         writableDatabase.update("projects",ContentValues().apply {put("cover_resource_id",resourceId)},"id=?",arrayOf(projectId.toString()))
@@ -126,12 +140,17 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
     fun delete(table: String, id: Long) {
         require(table in listOf("projects", "slides", "elements"))
-        writableDatabase.delete(table, "id=?", arrayOf(id.toString()))
+        val project = if(table=="slides") read().slides.find {it.id==id}?.projectId else null
+        transaction {
+            delete(table, "id=?", arrayOf(id.toString()))
+            if(project!=null) syncBaseNavigation(project)
+        }
         cleanImages()
     }
 
     fun saveElement(e: Element): Long {
         require(e.kind in listOf("text", "button", "image"))
+        require(e.baseNavigation==null || (e.kind=="button" && e.baseNavigation in listOf("previous","next")))
         if (e.targetId != null) {
             readableDatabase.rawQuery("SELECT 1 FROM slides a JOIN slides b ON a.project_id=b.project_id WHERE a.id=? AND b.id=?", arrayOf(e.slideId.toString(), e.targetId.toString())).use {
                 require(it.moveToFirst()) { "El destino debe pertenecer al proyecto" }
@@ -146,7 +165,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         if(e.expressionId!=null) readableDatabase.rawQuery("SELECT 1 FROM expressions WHERE id=? AND character_id=?",arrayOf(e.expressionId.toString(),e.characterId?.toString() ?: "")).use { require(it.moveToFirst()) { "La expresión debe pertenecer al personaje" } }
         val layer = if (e.id == 0L) readableDatabase.rawQuery("SELECT COALESCE(MAX(layer_order)+1,0) FROM elements WHERE slide_id=?",arrayOf(e.slideId.toString())).use { it.moveToFirst();it.getInt(0) } else e.layer
         val values = ContentValues().apply {
-            put("resource_id",e.resourceId);put("character_id",e.characterId);put("expression_id",e.expressionId);put("preset_id",e.presetId);put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
+            put("base_navigation",e.baseNavigation);put("resource_id",e.resourceId);put("character_id",e.characterId);put("expression_id",e.expressionId);put("preset_id",e.presetId);put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
             put("x", boundedPosition(e.x)); put("y", boundedPosition(e.y))
             put("text_color", e.textColor); put("background_color", e.backgroundColor); put("target_id", e.targetId)
             put("image", if (e.media.type == "slideshow") e.media.frames.first() else e.image); put("width", boundedValue(e.width, 0f, 1f, 0f)); put("height", boundedValue(e.height, 0f, 1f, 0f))
@@ -212,7 +231,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
     fun duplicateElement(id: Long): Long {
         val original = read().elements.first { it.id == id }
-        return saveElement(original.copy(id = 0, x = boundedPosition(original.x + .04f), y = boundedPosition(original.y + .04f)))
+        return saveElement(original.copy(id = 0, baseNavigation = null, x = boundedPosition(original.x + .04f), y = boundedPosition(original.y + .04f)))
     }
     fun reorderSlide(id: Long, delta: Int) {
         val story = read()
@@ -223,25 +242,58 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         ordered.removeAt(from); ordered.add(to, id)
         transaction { ordered.forEachIndexed { index, slideId ->
             update("slides", ContentValues().apply { put("sort_order", index) }, "id=?", arrayOf(slideId.toString()))
-        } }
+        }; syncBaseNavigation(slide.projectId) }
     }
     fun duplicateSlide(id: Long): Long {
         val story = read()
         val original = story.slides.first { it.id == id }
         var newId = 0L
         transaction {
-            newId = createSlide(original.projectId, "${original.name} (copia)")
+            newId = createSlide(original.projectId, "${original.name} (copia)",synchronizeNavigation=false)
             saveSlide(original.copy(id = newId))
-            story.elements.filter { it.slideId == id }.forEach { element ->
+            story.elements.filter { it.slideId == id && (!story.projects.first {p->p.id==original.projectId}.automaticBaseNavigation || it.baseNavigation==null) }.forEach { element ->
                 // Preserve stable destinations, including links to the source slide itself.
                 saveElement(element.copy(id = 0, slideId = newId))
             }
             val ids = story.slides.filter { it.projectId == original.projectId }.map { it.id }.toMutableList()
             ids.add(ids.indexOf(id) + 1, newId)
             ids.forEachIndexed { index, slideId -> update("slides", ContentValues().apply { put("sort_order", index) }, "id=?", arrayOf(slideId.toString())) }
+            syncBaseNavigation(original.projectId)
         }
         return newId
     }
+    fun moveSlideTo(id: Long, index: Int) {
+        val slides=read().slides
+        val own=slides.find {it.id==id} ?: return
+        val from=slides.filter {it.projectId==own.projectId}.indexOfFirst {it.id==id}
+        reorderSlide(id,index-from)
+    }
+    /** OFF keeps existing base buttons as manual snapshots; it never rewrites their targets. */
+    fun setAutomaticBaseNavigation(projectId: Long, enabled: Boolean) {
+        transaction {
+            update("projects",ContentValues().apply {put("automatic_base_navigation",enabled)},"id=?",arrayOf(projectId.toString()))
+            if(enabled) syncBaseNavigation(projectId)
+        }
+    }
+    fun syncBaseNavigation(projectId: Long) {transaction {syncBaseNavigationRows(projectId)}}
+    private fun syncBaseNavigationRows(projectId: Long) {
+        val story=read()
+        if(story.projects.none {it.id==projectId && it.automaticBaseNavigation}) return
+        val slides=story.slides.filter {it.projectId==projectId}
+        slides.forEachIndexed {index,slide ->
+            listOf("previous" to slides.getOrNull(index-1)?.id,"next" to slides.getOrNull(index+1)?.id).forEach {(role,target)->
+                val existing=story.elements.filter {it.slideId==slide.id && it.baseNavigation==role}
+                existing.drop(1).forEach {writableDatabase.delete("elements","id=?",arrayOf(it.id.toString()))}
+                if(target==null) existing.firstOrNull()?.let {writableDatabase.delete("elements","id=?",arrayOf(it.id.toString()))}
+                else if(existing.isNotEmpty()) writableDatabase.update("elements",ContentValues().apply {put("target_id",target)},"id=?",arrayOf(existing.first().id.toString()))
+                else saveElement(Element(0,slide.id,"button",if(role=="previous") "← Anterior" else "Siguiente →",
+                    x=if(role=="previous") .045f else .955f,y=.965f,width=.32f,height=.085f,
+                    textColor=-1,backgroundColor=0xFF8E435F.toInt(),targetId=target,baseNavigation=role,
+                    style=VisualStyle(shape="rounded")))
+            }
+        }
+    }
+
     fun background(slideId: Long, color: Int, image: String?) {
         val slide = read().slides.first { it.id == slideId }
         saveSlide(slide.copy(color = color, image = image))

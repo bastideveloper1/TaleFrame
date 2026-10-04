@@ -58,6 +58,10 @@ class LibraryStore(private val repository: StoryRepository) {
     fun saveCharacter(c: Character): Long {
         require(c.name.isNotBlank())
         val story=repository.read()
+        val previous=story.characters.find {it.id==c.id}
+        if(previous==null || previous.name!=c.name) require(story.characters.none {
+            it.id!=c.id && it.projectId==c.projectId && normalizedCharacterName(it.name)==normalizedCharacterName(c.name)
+        }) { "Ya existe un personaje con este nombre." }
         if(c.portraitId!=null) require(story.resources.any { it.id==c.portraitId && it.projectId==c.projectId && it.type=="image" }) { "El portrait debe ser una imagen de este proyecto" }
         if(c.dialogPresetId!=null) require(story.presets.any { it.id==c.dialogPresetId && it.projectId==c.projectId && it.kind=="dialog" }) { "Escoge un preset de diálogo de este proyecto" }
         if(c.id!=0L) require(story.characters.any { it.id==c.id && it.projectId==c.projectId })

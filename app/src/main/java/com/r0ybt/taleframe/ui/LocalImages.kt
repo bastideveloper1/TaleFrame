@@ -12,10 +12,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private object LocalImageCache {
+internal object LocalImageCache {
     private val cache = object : LruCache<String, Bitmap>(24 * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount
     }
+    fun peek(path:String, maxSide:Int):ImageBitmap? = synchronized(cache) {cache.get("$path:$maxSide") ?: cache.get("$path:384")}?.asImageBitmap()
     fun load(path: String, maxSide: Int): ImageBitmap? {
         val key = "$path:$maxSide"
         synchronized(cache) { cache.get(key) }?.let { return it.asImageBitmap() }
@@ -39,11 +40,15 @@ private object LocalImageCache {
     }
 }
 
+internal val LocalVisuals=staticCompositionLocalOf<Map<String,ImageBitmap>> {emptyMap()}
+
 @Composable
 fun localImage(path: String?, maxSide: Int): ImageBitmap? {
-    val result by produceState<ImageBitmap?>(null, path, maxSide) {
-        value = null
-        if (path != null) value = withContext(Dispatchers.IO) { LocalImageCache.load(path, maxSide) }
-    }
+    // A memory hit is available in the first composition, without disk work on Main.
+    val retained=LocalVisuals.current["image:$path"]
+    val cached=remember(path,maxSide,retained) {path?.let {LocalImageCache.peek(it,maxSide)} ?: retained}
+    val result by key(path,maxSide) { produceState<ImageBitmap?>(cached, path, maxSide) {
+        if (path != null) value = withContext(Dispatchers.IO) { LocalImageCache.load(path, maxSide) } ?: cached
+    } }
     return result
 }

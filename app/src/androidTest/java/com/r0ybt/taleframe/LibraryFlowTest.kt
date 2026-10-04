@@ -64,7 +64,7 @@ class LibraryFlowTest {
             assertFalse(narrator.style.showName);assertEquals("rectangle",narrator.style.shape)
             val snapshot=repo.read();compose.activityRule.scenario.recreate();await("Escena biblioteca")
             assertEquals(snapshot,repo.read());compose.onNodeWithTag("element-${image.id}").assertExists()
-            tap("▶ Play");compose.onNodeWithText("+ Personaje").assertDoesNotExist();compose.onNodeWithText("Cambiar expresión").assertDoesNotExist()
+            compose.onAllNodesWithText("▶ Probar desde aquí")[0].performClick();compose.onNodeWithText("+ Personaje").assertDoesNotExist();compose.onNodeWithText("Cambiar expresión").assertDoesNotExist()
             compose.onNodeWithText("Guillermo\nEscribe tu diálogo…").assertExists()
         } finally {compose.activityRule.scenario.close();project?.let {repo.delete("projects",it)};repo.close();files.forEach {it.delete()}}
     }

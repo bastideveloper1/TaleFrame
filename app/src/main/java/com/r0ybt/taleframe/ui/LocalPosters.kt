@@ -11,10 +11,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** Static video frames only; scrolling the catalog never allocates a MediaPlayer. */
-private object PosterCache {
+internal object PosterCache {
     private val cache=object : LruCache<String,Bitmap>(8*1024*1024) {
         override fun sizeOf(key:String,value:Bitmap)=value.allocationByteCount
     }
+    fun peek(path:String):ImageBitmap? = synchronized(cache) {cache.get(path)}?.asImageBitmap()
     fun load(path:String):ImageBitmap? {
         synchronized(cache) {cache.get(path)}?.let {return it.asImageBitmap()}
         val retriever=MediaMetadataRetriever()
@@ -34,8 +35,11 @@ private object PosterCache {
 }
 @Composable
 internal fun localPoster(path:String?):ImageBitmap? {
-    val result by produceState<ImageBitmap?>(null,path) {
+    val retained=LocalVisuals.current["video:$path"]
+    val cached=remember(path,retained) {path?.let(PosterCache::peek) ?: retained}
+    val result by key(path) { produceState<ImageBitmap?>(cached,path) {
         value=if(path==null) null else withContext(Dispatchers.IO) {PosterCache.load(path)}
+    }
     }
     return result
 }

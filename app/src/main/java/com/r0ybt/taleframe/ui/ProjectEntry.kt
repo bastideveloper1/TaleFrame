@@ -43,3 +43,20 @@ fun ProjectEntry(project:Project,story:Story,slides:List<Slide>,lastId:Long,cove
         Row(verticalAlignment=Alignment.CenterVertically) {Switch(project.skipDrafts,skip);Text("Omitir láminas en borrador",style=MaterialTheme.typography.bodySmall)}
     }
 }
+
+/** Closed notebook: spine, cover image and title stay separate from narrative slides. */
+@Composable
+fun NotebookCover(project:Project,story:Story,modifier:Modifier=Modifier) {
+    Row(modifier.padding(horizontal=10.dp,vertical=8.dp).background(MaterialTheme.colorScheme.primaryContainer,MaterialTheme.shapes.medium)) {
+        Box(Modifier.width(16.dp).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
+        Column(Modifier.weight(1f).padding(8.dp)) {
+            ProjectCover(project,story,Modifier.fillMaxWidth().weight(1f))
+            Text(project.name,Modifier.padding(top=6.dp),style=MaterialTheme.typography.titleMedium,maxLines=1)
+            androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(5.dp)) {
+                val ink=androidx.compose.ui.graphics.Color(0xFFE2CED4)
+                drawLine(ink,androidx.compose.ui.geometry.Offset(0f,1f),androidx.compose.ui.geometry.Offset(size.width,1f),1f)
+                drawLine(ink,androidx.compose.ui.geometry.Offset(0f,4f),androidx.compose.ui.geometry.Offset(size.width,4f),1f)
+            }
+        }
+    }
+}

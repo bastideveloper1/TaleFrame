@@ -46,7 +46,8 @@ fun SlideCanvas(
     selectedId: Long? = null, onResize: (Element) -> Unit = {}, showActions: Boolean = false,
     destinations: List<Slide> = emptyList(), reference: Slide? = null, referenceElements: List<Element> = emptyList(),
     referenceOpacity: Float = .35f, movingBackground: Boolean = false, onBackgroundMove: (Slide) -> Unit = {},
-    preview: Boolean = false, onAction: ((Long, Transition) -> Unit)? = null
+    preview: Boolean = false, onAction: ((Long, Transition) -> Unit)? = null,
+    onContext: (Element) -> Unit = {}, onSwipe: (Int) -> Unit = {}, grid: String = "Off", positionIndicator:String? = null
 ) {
     BoxWithConstraints(modifier.background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.Center) {
         val width = minOf(maxWidth, maxHeight * .75f)
@@ -74,10 +75,15 @@ fun SlideCanvas(
         val moveBackground by rememberUpdatedState(onBackgroundMove)
         val currentSelection by rememberUpdatedState(selectedId)
         val backgroundMode by rememberUpdatedState(movingBackground)
+        val contextMenu by rememberUpdatedState(onContext)
+        val swipe by rememberUpdatedState(onSwipe)
         val density = LocalDensity.current
         val touchSize = with(density) { 48.dp.toPx() }
         val handleRadius = with(density) { 24.dp.toPx() }
         val gesture = if (editing) Modifier.pointerInput(slide.id, stage, density.density) {
+            var lastTapId: Long? = null
+            var lastTapTime = 0L
+            var lastTapPosition = Offset.Zero
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false)
                 val previousDraft = draft
@@ -104,6 +110,7 @@ fun SlideCanvas(
                 var changedBackground = startBackground
                 var cancelled = false
                 var completed = false
+                var releasedAt=down.uptimeMillis
                 try {
                     while (true) {
                         val event = awaitPointerEvent()
@@ -113,6 +120,7 @@ fun SlideCanvas(
                         // Check consumption before release so cancellation never commits.
                         if (pointer.isConsumed) { cancelled = true; break }
                         if (!pointer.pressed) {
+                            releasedAt=pointer.uptimeMillis
                             pointer.consume()
                             break
                         }
@@ -145,6 +153,16 @@ fun SlideCanvas(
                         if (adjustBackground) moveBackground(changedBackground)
                         else if (changed != null && hit?.locked == false) { if (handle) resize(changed) else move(changed) }
                     }
+                    if(!cancelled && !dragging && hit!=null && !adjustBackground && !handle && releasedAt-down.uptimeMillis<viewConfiguration.longPressTimeoutMillis) {
+                        val now=down.uptimeMillis
+                        if(lastTapId==hit.id && now-lastTapTime in viewConfiguration.doubleTapMinTimeMillis..viewConfiguration.doubleTapTimeoutMillis &&
+                            (down.position-lastTapPosition).getDistance()<touchSize) {
+                            contextMenu(hit);lastTapId=null
+                        } else {lastTapId=hit.id;lastTapTime=now;lastTapPosition=down.position}
+                    } else lastTapId=null
+                    if(!cancelled && dragging && hit==null && !adjustBackground &&
+                        kotlin.math.abs(accumulated.x)>=maxOf(72.dp.toPx(),stage.width*.2f) &&
+                        kotlin.math.abs(accumulated.x)>kotlin.math.abs(accumulated.y)*1.5f) swipe(if(accumulated.x<0) 1 else -1)
                     completed = !cancelled
                 } finally {
                     if (!completed) { draft = previousDraft; backgroundDraft = previousBackgroundDraft }
@@ -158,6 +176,18 @@ fun SlideCanvas(
             }
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editing && reference != null) 1f - referenceOpacity.coerceIn(0f, .9f) else 1f }) {
                 Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate, onAction) { id, size -> measured[id] = size }
+            }
+            if(editing && positionIndicator!=null) Text(positionIndicator,Modifier.align(Alignment.TopCenter).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(8.dp),style=MaterialTheme.typography.labelMedium)
+            if(editing && grid!="Off") {
+                val color=MaterialTheme.colorScheme.primary.copy(alpha=.18f)
+                Canvas(Modifier.fillMaxSize().testTag("editor-grid")) {
+                    val divisions=if(grid=="Fina") 20 else 10
+                    for(i in 1 until divisions) {
+                        val x=size.width*i/divisions;val y=size.height*i/divisions
+                        drawLine(color,Offset(x,0f),Offset(x,size.height),1f)
+                        drawLine(color,Offset(0f,y),Offset(size.width,y),1f)
+                    }
+                }
             }
             if(editing && draft!=null) {
                 val e=requireNotNull(draft);val m=measured[e.id] ?: IntSize.Zero

@@ -5,6 +5,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.edit
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.grid.LazyGridState
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -52,6 +54,15 @@ fun TaleFrameApp(model: StoryViewModel) {
     var savingTemplate by remember {mutableStateOf(false)}
     var applyingTemplate by remember {mutableStateOf<SlideTemplate?>(null)}
     var toolbarExpanded by rememberSaveable {mutableStateOf(true)}
+    val albumState=rememberSaveable(projectId,saver=LazyGridState.Saver) {LazyGridState()}
+    var grid by remember {mutableStateOf(preferences.getString("grid","Off") ?: "Off")}
+    var quickMenu by remember {mutableStateOf<Element?>(null)}
+    var quickText by remember {mutableStateOf<Element?>(null)}
+    var quickDestination by remember {mutableStateOf<Element?>(null)}
+    var quickTransition by remember {mutableStateOf<Element?>(null)}
+    var baseOffer by remember {mutableStateOf(false)}
+    var swipeIndicator by remember {mutableStateOf<String?>(null)}
+    LaunchedEffect(swipeIndicator) {if(swipeIndicator!=null) {delay(1100);swipeIndicator=null}}
     var playNotice by remember {mutableStateOf<String?>(null)}
     var showLibrary by rememberSaveable { mutableStateOf(false) }
     var showCharacters by rememberSaveable { mutableStateOf(false) }
@@ -151,7 +162,7 @@ fun TaleFrameApp(model: StoryViewModel) {
     BackHandler(projectId != null || playing) { back() }
     Scaffold { padding ->
         if (playing) {
-            Player(slides.find { it.id == playSlideId }, story.elements, Modifier.padding(padding), blockedTargets=slides.filter {project?.skipDrafts==true && it.draft}.map {it.id}.toSet(), leave={playing=false}) { target ->
+            Player(slides.find { it.id == playSlideId }, story.elements, Modifier.padding(padding), blockedTargets=slides.filter {project?.skipDrafts==true && it.draft}.map {it.id}.toSet(), leave={playing=false},slides=slides) { target ->
                 if (slides.any { it.id == target }) playSlideId = target
             }
         } else Column(Modifier.fillMaxSize().padding(padding)) {
@@ -161,7 +172,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                     modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1,overflow=TextOverflow.Ellipsis)
                 if(projectId==null) TextButton(onClick={showSettings=true}) {Text("Tema")}
                 if (project != null && !showLibrary) TextButton(onClick = { librarySection="images";showLibrary = true }) { Text("Biblioteca") }
-                if (slides.isNotEmpty()) TextButton(onClick = { play(slide!=null) }) { Text("▶ Play") }
+                if (slides.isNotEmpty()) TextButton(onClick = { play(slide!=null) }) { Text(if(slide!=null) "▶ Probar desde aquí" else "▶ Play",modifier=Modifier.widthIn(max=90.dp),style=MaterialTheme.typography.labelMedium) }
             }
             if (!ready) Text("Abriendo proyectos…", Modifier.padding(24.dp))
             else if (projectId == null) {
@@ -171,9 +182,8 @@ fun TaleFrameApp(model: StoryViewModel) {
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(story.projects, key = { it.id }) { p ->
                         Card(Modifier.fillMaxWidth().clickable { projectId = p.id }) {
-                            ProjectCover(p,story,Modifier.fillMaxWidth().height(140.dp))
+                            NotebookCover(p,story,Modifier.fillMaxWidth().height(170.dp))
                             Column(Modifier.padding(16.dp)) {
-                                Text(p.name, style = MaterialTheme.typography.titleMedium)
                                 Text("${story.slides.count { it.projectId == p.id }} láminas")
                                 Row {
                                     TextButton(onClick = { nameRequest = NameRequest("projects", p.id, null, p.name) }) { Text("Renombrar") }
@@ -193,6 +203,10 @@ fun TaleFrameApp(model: StoryViewModel) {
             } else if (slide == null) {
                 if(project!=null) ProjectEntry(project,story,slides,preferences.getLong("last_slide_${project.id}",0L),
                     cover={coverPicker=true},resume={id->slideId=id},library={section->librarySection=section;showLibrary=true},play={play()},skip={value->model.edit {setSkipDrafts(project.id,value)}})
+                if(project!=null) Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                    Switch(project.automaticBaseNavigation,{enabled->if(enabled) baseOffer=true else model.edit {setAutomaticBaseNavigation(project.id,false)}})
+                    Text("Navegación base automática",style=MaterialTheme.typography.bodySmall)
+                }
                 Text("Álbum de láminas", Modifier.padding(horizontal = 16.dp), style = MaterialTheme.typography.titleMedium)
                 Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = { nameRequest = NameRequest("slides", null, projectId, "Lámina ${slides.size + 1}") }) { Text("+ Crear lámina") }
@@ -204,10 +218,13 @@ fun TaleFrameApp(model: StoryViewModel) {
                 Album(slides, story.elements, albumSize, Modifier.weight(1f),
                     open = { slideId = it.id; preferences.edit {putLong("last_slide_$projectId",it.id)} }, rename = { nameRequest = NameRequest("slides", it.id, null, it.name) },
                     delete = { deleteRequest = DeleteRequest("slides", it.id, it.name) },
-                    duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } },initialId=project?.let {initialSlide(it,slides)?.id},setInitial={s->model.edit {setInitialSlide(s.projectId,s.id)}},setDraft={s->model.edit {setDraft(s.id,!s.draft)}})
+                    duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } },initialId=project?.let {initialSlide(it,slides)?.id},setInitial={s->model.edit {setInitialSlide(s.projectId,s.id)}},setDraft={s->model.edit {setDraft(s.id,!s.draft)}},state=albumState,moveTo={s,index->model.edit {moveSlideTo(s.id,index)}})
             } else {
                 SlideCanvas(slide, story.elements.filter { it.slideId == slide.id }, Modifier.weight(1f).fillMaxWidth(), editing = true,
-                    onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y) } },
+                    onContext={quickMenu=it},grid=grid,positionIndicator=swipeIndicator,onSwipe={delta ->
+                        val next=slides.getOrNull(slides.indexOf(slide)+delta)
+                        if(next!=null) {slideId=next.id;preferences.edit {putLong("last_slide_$projectId",next.id)};swipeIndicator="${slides.indexOf(next)+1} / ${slides.size}"}
+                    }, onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y) } },
                     onResize = { e -> model.edit { resizeElement(e.id, e.width, e.height, e.x, e.y) } }, selectedId = selectedId,
                     showActions = actions, destinations = slides, reference = slides.find { it.id == referenceId },
                     referenceElements = story.elements.filter { it.slideId == referenceId }, referenceOpacity = referenceOpacity,
@@ -217,7 +234,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                     } })
                 // Fixed-height controls: selecting on DOWN cannot resize the stage and cancel a gesture.
                 Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
-                    if (selected == null) Text(if (movingBackground) "Arrastra el fondo manual" else "Toca para seleccionar · arrastra para mover", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
+                    if (selected == null) Text(if (movingBackground) "Arrastra el fondo manual" else "Toca · arrastra · doble toque: acciones", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
                     else {
                         TextButton(onClick = { elementRequest = selected }) { Text("Editar") }
                         if (selected.kind == "image" && selected.characterId != null) TextButton(onClick = { changingExpressionId = selected.id; expressionCharacterId = selected.characterId }) { Text("Cambiar expresión") }
@@ -232,38 +249,51 @@ fun TaleFrameApp(model: StoryViewModel) {
                         TextButton(onClick = { deleteRequest = DeleteRequest("elements", selected.id, "elemento") }) { Text("Eliminar") }
                     }
                 }
-                Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
-                    TextButton(onClick={toolbarExpanded=!toolbarExpanded},modifier=Modifier.semantics {contentDescription=if(toolbarExpanded) "Reducir herramientas" else "Mostrar herramientas"}){Text(if(toolbarExpanded) "‹ Herramientas" else "Herramientas ›")}
-                    if(!toolbarExpanded) {
-                        TextButton(onClick={nameRequest=NameRequest("layers",null,null,"")}) {Text("Elementos")}
-                        TextButton(onClick={play(true)}) {Text("Reproducir desde esta lámina")}
-                    }
-                    if(toolbarExpanded) {
-                    TextButton(onClick = { showBackground = true }) { Text("Fondo") }
-                    TextButton(onClick = { showCharacters = true }) { Text("+ Personaje") }
-                    TextButton(onClick = { showDialogs = true }) { Text("+ Diálogo") }
-                    TextButton(onClick = { elementRequest = Element(0, slide.id, "text", "", y = .15f, width = .6f, height = .18f) }) { Text("+ Texto") }
-                    TextButton(onClick = { elementRequest = Element(0, slide.id, "button", "", x = .1f + (story.elements.count { it.slideId == slide.id && it.kind == "button" } % 3) * .3f,
-                        y = .7f, backgroundColor = 0xFF8E435F.toInt(), textColor = -1, width = .28f, height = .1f) }) { Text("+ Botón") }
-                    TextButton(onClick = { importImage("element") }) { Text("+ Imagen") }
-                    TextButton(onClick = { importImage("element", "gif") }) { Text("+ GIF") }
-                    TextButton(onClick = { importImage("element", "video") }) { Text("+ Video") }
-                    TextButton(onClick = { importSequence() }) { Text("+ Secuencia") }
-                    TextButton(onClick = { showBehavior = true }) { Text("Audio / Tiempo") }
-                    TextButton(onClick = { actions = !actions }) { Text(if (actions) "Ocultar acciones" else "Ver acciones") }
-                    TextButton(onClick = { showReference = true }) { Text("Calco") }
-                    TextButton(onClick = { movingBackground = !movingBackground }, enabled = slide.image != null && slide.backgroundMode == "manual" && !slide.backgroundLocked) { Text(if (movingBackground) "Terminar fondo" else "Mover fondo") }
-                    TextButton(onClick = { selectedId = null; movingBackground = false }) { Text("Deseleccionar") }
-                    TextButton(onClick = { nameRequest = NameRequest("layers", null, null, "") }) { Text("Elementos") }
-                    TextButton(onClick={model.edit {saveElement(Element(0,slide.id,"image","",width=.45f,height=.4f,backgroundColor=0xFFF4E8EB.toInt(),panel=PanelOptions()))}}) {Text("+ Panel")}
-                    TextButton(onClick={savingTemplate=true}){Text("Guardar como plantilla")}
-                    TextButton(onClick={model.edit {setDraft(slide.id,!slide.draft)}}){Text(if(slide.draft) "Marcar completa" else "Marcar borrador")}
-                    TextButton(onClick={play(true)}){Text("Reproducir desde esta lámina")}
-                    }
-                }
+                EditorToolbar(listOf(
+                    EditorTool("background","Fondo") {showBackground=true},
+                    EditorTool("character","+ Personaje") {showCharacters=true},
+                    EditorTool("dialog","+ Diálogo") {showDialogs=true},
+                    EditorTool("text","+ Texto") {elementRequest=Element(0,slide.id,"text","",y=.15f,width=.6f,height=.18f)},
+                    EditorTool("button","+ Botón") {elementRequest=Element(0,slide.id,"button","",x=.1f+(story.elements.count {it.slideId==slide.id && it.kind=="button"}%3)*.3f,y=.7f,backgroundColor=0xFF8E435F.toInt(),textColor=-1,width=.28f,height=.1f)},
+                    EditorTool("image","+ Imagen") {importImage("element")},
+                    EditorTool("gif","+ GIF") {importImage("element","gif")},
+                    EditorTool("video","+ Video") {importImage("element","video")},
+                    EditorTool("sequence","+ Secuencia") {importSequence()},
+                    EditorTool("time","Audio / Tiempo") {showBehavior=true},
+                    EditorTool("actions",if(actions) "Ocultar acciones" else "Ver acciones") {actions=!actions},
+                    EditorTool("reference","Calco") {showReference=true},
+                    EditorTool("move-background",if(movingBackground) "Terminar fondo" else "Mover fondo",slide.image!=null && slide.backgroundMode=="manual" && !slide.backgroundLocked) {movingBackground=!movingBackground},
+                    EditorTool("deselect","Deseleccionar") {selectedId=null;movingBackground=false},
+                    EditorTool("layers","Elementos") {nameRequest=NameRequest("layers",null,null,"")},
+                    EditorTool("panel","+ Panel") {model.edit {saveElement(Element(0,slide.id,"image","",width=.45f,height=.4f,backgroundColor=0xFFF4E8EB.toInt(),panel=PanelOptions()))}},
+                    EditorTool("template","Guardar como plantilla") {savingTemplate=true},
+                    EditorTool("draft",if(slide.draft) "Marcar completa" else "Marcar borrador") {model.edit {setDraft(slide.id,!slide.draft)}},
+                    EditorTool("play-here","▶ Probar desde aquí") {play(true)},
+                    EditorTool("play-start","▶ Reproducir desde inicio") {play()}
+                ),preferences,toolbarExpanded,{toolbarExpanded=!toolbarExpanded},{nameRequest=NameRequest("layers",null,null,"")},{play(true)},grid,{mode->grid=mode;preferences.edit {putString("grid",mode)}})
             }
         }
     }
+    quickMenu?.let {original ->
+        val e=story.elements.find {it.id==original.id} ?: original
+        AlertDialog(onDismissRequest={quickMenu=null},title={Text(if(e.kind=="image") e.sourceName.ifBlank {if(e.panel!=null) "Panel" else "Imagen"} else e.text.take(35))},text={Column {
+            if(e.kind!="image") TextButton(onClick={quickMenu=null;quickText=e}){Text("Editar texto")}
+            if(e.kind=="button") {
+                TextButton(onClick={quickMenu=null;quickDestination=e}){Text("Destino")}
+                TextButton(onClick={quickMenu=null;quickTransition=e}){Text("Transición")}
+            }
+            if(e.kind=="image") TextButton(onClick={quickMenu=null;if(e.characterId!=null) {changingExpressionId=e.id;expressionCharacterId=e.characterId} else importImage("replace",e.media.type.takeIf {it!="slideshow"} ?: "image",e.id)}){Text(if(e.characterId!=null) "Cambiar expresión" else "Cambiar recurso")}
+            TextButton(onClick={quickMenu=null;elementRequest=e}){Text("Propiedades")}
+            TextButton(onClick={quickMenu=null;model.edit {duplicateElement(e.id)}}){Text("Duplicar")}
+            TextButton(onClick={quickMenu=null;model.edit {toggleLock(e.id)}}){Text(if(e.locked) "Desbloquear" else "Bloquear")}
+        }},confirmButton={TextButton(onClick={quickMenu=null;deleteRequest=DeleteRequest("elements",e.id,"elemento")}){Text("Eliminar")}},dismissButton={TextButton(onClick={quickMenu=null}){Text("Cerrar")}})
+    }
+    quickText?.let {e ->
+        QuickTextDialog(e.text,{quickText=null}) {text->model.edit {editElement(e,e.copy(text=text))};quickText=null}
+    }
+    quickDestination?.let {e ->DestinationDialog(slides,story.elements,e.targetId,e.slideId,{quickDestination=null}) {id->model.edit {editElement(e,e.copy(targetId=id))};quickDestination=null}}
+    quickTransition?.let {e ->TransitionDialog(e.transition,{quickTransition=null}) {effect->model.edit {editElement(e,e.copy(transition=effect))};quickTransition=null}}
+    if(baseOffer && project!=null) AlertDialog(onDismissRequest={baseOffer=false},title={Text("Generar navegación base")},text={Text("Se sincronizarán Anterior/Siguiente según el orden del álbum. Los botones narrativos conservarán sus destinos. Al desactivar, los botones creados permanecen sin actualizarse automáticamente.")},confirmButton={TextButton(onClick={model.edit {setAutomaticBaseNavigation(project.id,true)};baseOffer=false}){Text("Generar y activar")}},dismissButton={TextButton(onClick={baseOffer=false}){Text("Cancelar")}})
     nameRequest?.let { request ->
         if (request.table == "layers") {
             AlertDialog(onDismissRequest = { nameRequest = null }, title = { Text("Elementos · arriba primero") }, text = {

@@ -62,7 +62,10 @@ fun LocalMedia(path: String?, options: MediaOptions, modifier: Modifier = Modifi
         contentDescription = "Imagen ${frameIndex(tick, options.frames.size, options.loop) + 1} de ${options.frames.size}"
     } else Modifier), contentAlignment = Alignment.Center) {
         when {
-            options.type == "video" && active -> VideoMedia(path, options, fill, editing)
+            options.type == "video" && active -> {
+                localPoster(path)?.let {Image(it,null,Modifier.fillMaxSize(),contentScale=if(fill) ContentScale.Crop else ContentScale.Fit)}
+                VideoMedia(path, options, fill, editing)
+            }
             options.type == "gif" && active -> GifMedia(path, options.loop, fill)
             options.type == "video" -> {
                 val poster = localPoster(path)
@@ -94,6 +97,7 @@ private fun GifMedia(path: String?, loop: Boolean, fill: Boolean) {
             value = decoded.getOrNull()
             error = if (decoded.isFailure) "GIF no disponible. Reemplázalo o elimínalo." else null
         }
+        if(drawable==null) localImage(path,384)?.let {Image(it,null,Modifier.fillMaxSize(),contentScale=if(fill) ContentScale.Crop else ContentScale.Fit)}
         val ownedDrawable = drawable
         DisposableEffect(ownedDrawable) { onDispose { (ownedDrawable as? AnimatedImageDrawable)?.stop(); ownedDrawable?.callback = null } }
         AndroidView(factory = { context -> ImageView(context).apply {
@@ -108,6 +112,7 @@ private fun GifMedia(path: String?, loop: Boolean, fill: Boolean) {
     } else {
         // Android 7/8 fallback. Movie is local and bounded at import, no network dependency.
         val movie by produceState<Movie?>(null, path) { value = withContext(Dispatchers.IO) { try { Movie.decodeFile(path) } catch (_: Exception) { null } } }
+        if(movie==null) localImage(path,384)?.let {Image(it,null,Modifier.fillMaxSize(),contentScale=if(fill) ContentScale.Crop else ContentScale.Fit)}
         AndroidView(factory = { context -> LegacyGifView(context) }, modifier = Modifier.fillMaxSize(), update = { it.configure(movie, loop, fill) }, onRelease = { it.running = false })
         if (movie == null) error = "GIF no disponible. Reemplázalo o elimínalo."
     }
@@ -194,6 +199,7 @@ private fun VideoMedia(path: String?, options: MediaOptions, fill: Boolean, edit
             view.setTransform(Matrix().apply { setScale(videoWidth * scale / view.width, videoHeight * scale / view.height, view.width / 2f, view.height / 2f) })
         }
         fun start(st: SurfaceTexture) {
+            view?.alpha=0f
             surface?.release(); surface = Surface(st)
             controller.open(path, options, surface) { w, h -> videoWidth = w; videoHeight = h; transform() }
         }
@@ -201,14 +207,14 @@ private fun VideoMedia(path: String?, options: MediaOptions, fill: Boolean, edit
             override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) = start(st)
             override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) = transform()
             override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { controller.release(); surface?.release(); surface = null; return true }
-            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) { view?.alpha=1f }
         }
         view?.surfaceTextureListener = listener
         view?.surfaceTexture?.let(::start)
         onDispose { view?.surfaceTextureListener = null; controller.release(); surface?.release() }
     }
     Box(Modifier.fillMaxSize()) {
-        AndroidView(factory = { TextureView(it).apply { isOpaque = false; texture = this } }, modifier = Modifier.fillMaxSize())
+        AndroidView(factory = { TextureView(it).apply { isOpaque = false; alpha=0f; texture = this } }, modifier = Modifier.fillMaxSize())
         if (!options.autoplay && !editing) TextButton(onClick = { controller.toggle() }, modifier = Modifier.align(Alignment.BottomCenter)) { Text("▶ / Pausa") }
         error?.let { Text(it, color = Color.White, modifier = Modifier.background(Color(0xAA000000))) }
     }

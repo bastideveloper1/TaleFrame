@@ -33,7 +33,7 @@ class MediaPersistenceTest {
         }
         StoryRepository(context,name).use { repo ->
             val story = repo.read()
-            assertEquals(5,repo.readableDatabase.version)
+            assertEquals(6,repo.readableDatabase.version)
             val s = story.slides.first { it.id == 11L }
             assertEquals("/old/image",s.image); assertEquals("manual",s.backgroundMode); assertEquals(1.8f,s.backgroundScale,0f); assertTrue(s.backgroundLocked)
             assertFalse(s.autoEnabled); assertNull(s.audio)

@@ -1,6 +1,6 @@
 package com.r0ybt.taleframe.data
 
-data class Project(val id: Long, val name: String, val coverResourceId: Long? = null, val initialSlideId: Long? = null, val skipDrafts: Boolean = false)
+data class Project(val id: Long, val name: String, val coverResourceId: Long? = null, val initialSlideId: Long? = null, val skipDrafts: Boolean = false, val automaticBaseNavigation: Boolean = false)
 data class Slide(
     val id: Long, val projectId: Long, val name: String, val color: Int = -1,
     val image: String? = null, val order: Int = 0,
@@ -26,7 +26,7 @@ data class Element(
     val media: MediaOptions = MediaOptions(), val transition: Transition = Transition(),
     val style: VisualStyle = VisualStyle(), val speakerName: String = "", val sourceName: String = "",
     val resourceId: Long? = null, val characterId: Long? = null, val expressionId: Long? = null, val presetId: Long? = null,
-    val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null
+    val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null, val baseNavigation: String? = null
 )
 data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList(),
     val resources: List<Resource> = emptyList(), val characters: List<Character> = emptyList(),

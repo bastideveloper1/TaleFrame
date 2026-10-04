@@ -42,7 +42,7 @@ class CompositionPersistenceTest {
         fun rows(db:SQLiteDatabase,table:String,columns:String)=db.rawQuery("SELECT $columns FROM $table ORDER BY id",null).use {c->buildList {while(c.moveToNext()) add((0 until c.columnCount).map {if(c.isNull(it)) null else c.getString(it)})}}
         val old=SQLiteDatabase.openDatabase(file.path,null,SQLiteDatabase.OPEN_READONLY).use {db->listOf("projects","slides","elements","resources","characters","expressions","presets").associateWith {table->val columns=db.rawQuery("PRAGMA table_info($table)",null).use {c->buildList {while(c.moveToNext()) add(c.getString(1))}};columns.joinToString(",") to rows(db,table,columns.joinToString(","))}}
         try {StoryRepository(context,name).use {repo->
-            assertEquals(5,repo.readableDatabase.version)
+            assertEquals(6,repo.readableDatabase.version)
             old.forEach {(table,pair)->assertEquals(table,pair.second,rows(repo.readableDatabase,table,pair.first))}
             val story=repo.read();assertFalse(story.slides.first().draft);assertFalse(story.projects.single().skipDrafts);assertNull(story.projects.single().coverResourceId)
             assertEquals(11L,initialSlide(story.projects.single(),story.slides)?.id);assertTrue(repo.saveElement(Element(0,11,"text","Nuevo"))>900)

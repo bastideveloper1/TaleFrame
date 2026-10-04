@@ -1,6 +1,6 @@
 # TaleFrame
 
-Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1–4 se migran sin borrar datos ni cambiar IDs.
+Editor Android privado y offline de historietas interactivas por láminas. Kotlin + Jetpack Compose y SQLite local. Los proyectos de las Iteraciones 1–5 se migran sin borrar datos ni cambiar IDs.
 
 ## Editor visual
 
@@ -267,3 +267,55 @@ Las pruebas nuevas cubren migración real v4 conservando cada columna previa e I
 Límites: no hay cola de bocadillo libre, texto enriquecido por fragmentos, autoajuste de fuente, paneles vinculados entre sí ni reflujo automático del layout. Las guías son aproximadas y no hacen snap. Las plantillas se aplican en nuevas láminas del mismo proyecto; no hay importación/exportación ni actualización dinámica de sus instancias. Siguen pendientes deshacer/rehacer y verificación física de Android 24–27/codecs, grandes bibliotecas y mezcla real de sonido.
 
 En teléfono físico revisar tema claro/oscuro y cambio del sistema, contraste y tamaño de fuente del dispositivo; scroll de toolbar y diálogos en pantallas pequeñas; encuadre de imágenes verticales/horizontales/transparencia en paneles; drag rápido, bloqueo y guías; overflow en bocadillos; presión/pulso de botones; portada y recursos retenidos por plantillas; reproducción desde inicio/actual con conexiones a borradores; cierre forzado y actualización sobre Iteración 4 sin borrar datos. No se añadieron permisos ni dependencias: continúa sin INTERNET, con recursos locales y backup/transferencia deshabilitados.
+
+## TaleFrame 5.1 — Dogfooding UX y navegación
+
+### Reproducción y transiciones
+
+El flash tenía varias ventanas concretas: `localImage`/`localPoster` comenzaban con `null` incluso ante un hit de caché; la composición dibujaba entonces `slide.color` (blanco por defecto). Además, el progreso compartido empezaba en 1 antes de que `LaunchedEffect` lo llevara a 0, y el cambio de preview estática a reproducción recreaba contenido sin una imagen disponible mientras se preparaba GIF/TextureView.
+
+La lectura inicial usa exclusivamente caché en memoria. Al salir se conserva la escena activa hasta preparar thumbnails/posters de origen y destino en IO; no se preparan MediaPlayers del destino. Cada salida posee un `Animatable(0f)` propio. La animación espera a que el destino llegue a composición. Su área y desplazamiento coinciden con el lienzo real; en horizontal las bandas exteriores permanecen negras y no cruzan la historia durante los slides. Los posters/thumbs se retienen durante la transición y la entrada, con un límite adicional de 12 MB por escena (24 MB durante el cruce), además de las cachés existentes. Las imágenes completas se siguen decodificando fuera de Main. El GIF muestra su imagen estática hasta tener drawable; TextureView permanece transparente hasta su primer buffer, sobre su poster. Los recursos dañados conservan el error existente y el color configurado. Un fondo blanco elegido intencionalmente sigue siendo blanco.
+
+**Ninguna, Fade, Deslizar izquierda y Deslizar derecha** tienen tarjetas visuales, una demostración A/B y **Probar transición**. Duración: 200–1000 ms; Ninguna es inmediata después de preparar el destino. **Transición** en el menú rápido ofrece **Aplicar**; en Propiedades/Audio-Tiempo se confirma con Guardar. Cada acción conserva su propio efecto. No se añadieron los tres efectos opcionales.
+
+La cabecera del editor ofrece **▶ Probar desde aquí**; la toolbar también ofrece **▶ Reproducir desde inicio**. La primera usa un punto de entrada temporal y conserva el inicio oficial y la política de borradores. **Mostrar nombre de lámina** es un control durante Play: añade/quita inmediatamente nombre y posición como overlay, sin guardar contenido narrativo.
+
+### Editor y herramientas
+
+Un DOWN selecciona; el movimiento usa el slop normal de Android, sin esperar tap, doble toque ni pulsación larga. Al finalizar un toque breve se conserva únicamente ID, tiempo y posición; un segundo toque breve sobre ese mismo elemento, dentro de los límites de Android y del área cercana, abre las acciones. Arrastrar, cancelar, tocar otra zona o mantener pulsado invalida el candidato. El reconocimiento no introduce un temporizador que retrase el drag.
+
+**Doble toque** abre un menú breve para texto, botón, imagen, personaje, panel y multimedia. Texto/botón ofrecen **Editar texto** separado de **Propiedades**; el botón añade **Destino** y **Transición**; imágenes ofrecen cambiar recurso/expresión. Duplicar y bloquear están disponibles, y **Eliminar** queda como acción visible con confirmación posterior. El diálogo rápido enfoca el texto y aplica una diferencia sobre la fila más reciente, conservando geometría, capas y apariencia.
+
+**Destino** y **Propiedades → Elegir destino** abren un selector a pantalla completa: miniatura, nombre, posición, Borrador y borde/etiqueta **ACTUAL**. Los loops a la lámina actual se permiten. La elección utiliza el ID, nunca el número visual. Los selectores de calco y uso de recursos conservan su función propia.
+
+**Cuadrícula: Off / Fina / Media** persiste en preferencias locales. Es dibujo sobre el área útil, solo en editor, con divisiones de 5 % o 10 %. Convive con las guías; no hace snap ni escribe posiciones. La toolbar mide 60 dp, usa controles pastel más amplios y conserva reducción/expansión. Mantener pulsada una herramienta abre **Mover antes / Mover después** (una posición); su orden persiste por dispositivo. Las herramientas nuevas se añaden al orden guardado y las claves desconocidas se ignoran.
+
+Un **swipe horizontal que comienza en espacio vacío** cambia de lámina según el Álbum: izquierda siguiente, derecha anterior. Requiere al menos 72 dp o 20 % del ancho, y predominio horizontal de 1,5×. Empezar sobre un elemento, su zona táctil ampliada o tirador conserva el gesto de ese elemento; mover un fondo manual también conserva prioridad. Un indicador superpuesto `12 / 34` dura 1,1 s y no cambia el tamaño del lienzo. Los extremos no navegan fuera del proyecto. Durante movimiento se mantiene el borrador en memoria y solo se confirma al soltar.
+
+### Álbum, biblioteca y cuadernos
+
+El estado del grid vive en la navegación del proyecto, fuera de la rama que compone el Álbum. Volver del editor conserva índice y offset. Mantener una tarjeta pulsada y arrastrar muestra **Insertar aquí** con borde; acercarse a los extremos desplaza el Álbum. Al soltar se guarda una sola operación de orden. Cancelar no persiste. Los IDs, imágenes, transiciones y conexiones narrativas no se recrean. Se mantienen Mover antes/Mover después como alternativa accesible.
+
+Las tarjetas de proyecto usan un cuaderno cerrado estilizado: lomo, portada, título y borde de páginas, manteniendo las acciones de administración. La portada continúa siendo una referencia independiente de las láminas.
+
+Biblioteca rechaza creaciones/renombrados con nombres de personaje equivalentes al normalizar mayúsculas, extremos y espacios repetidos, dentro del mismo proyecto: **Ya existe un personaje con este nombre.** Los duplicados anteriores no se eliminan ni renombran; pueden editar sus otros datos sin cambiar el nombre.
+
+### Navegación base y SQLite 5 → 6
+
+La migración es aditiva: `projects.automatic_base_navigation INTEGER NOT NULL DEFAULT 0` y `elements.base_navigation TEXT NULL`, con valores `previous` / `next` solo en botones. No reconstruye tablas ni reescribe los JSON, destinos, IDs, secuencias, orden ni archivos existentes. Las migraciones anteriores continúan encadenadas.
+
+**Navegación base automática** está **OFF tanto en proyectos existentes como nuevos**. Activar ofrece **Generar y activar**: sincroniza Anterior/Siguiente por orden actual sin tocar botones narrativos. OFF conserva los botones base existentes como snapshots manuales; no sincroniza ni genera otros. Duplicar con OFF conserva la composición, incluidos los botones ya presentes, con los destinos originales.
+
+Con ON, duplicar inserta inmediatamente después del origen y sincroniza: original Siguiente → copia; copia Anterior → original. También sincroniza al crear, reordenar o eliminar láminas. Se conserva un único botón por rol; primera solo Siguiente, última solo Anterior, única ninguno. Los botones existentes solo reciben el nuevo destino, conservando ID, posición, tamaño, bloqueo, estilo y transición; los que dejan de corresponder se eliminan. Los nuevos usan márgenes inferiores seguros. Duplicar un elemento base crea un botón narrativo ordinario para que una sincronización no elimine esa copia personal.
+
+Solo filas con `base_navigation` participan en la sincronización. Los botones narrativos conservan sus destinos estables aunque las escenas cambien de posición. Borrar el destino mantiene `ON DELETE SET NULL`. En Play, los botones base son botones normales sin etiquetas técnicas. Las plantillas conservan su contrato visual: no transportan destino ni rol de navegación base; cualquier botón visual reutilizado queda como narrativo sin destino.
+
+### Verificación y límites
+
+Se mantienen las pruebas anteriores y se añaden casos de migración v5 comparando las ocho tablas/columnas anteriores y secuencias; navegación base ON/OFF, duplicación, extremos, orden, eliminación y geometría; nombres de personaje y deltas; doble toque, texto, eliminación y Play actual; scroll/drag del Álbum; selector ACTUAL/loops; cuadrícula/orden de herramientas; cache visible en la primera composición; muestreo de frames para las cuatro transiciones con colores, imagen, GIF y video; y drag con 45 capas, GIF/video, cuadrícula y sin recrear el MediaPlayer.
+
+La preparación usa el primer frame/poster estático, no captura el último buffer del video/GIF saliente. Las primeras visitas con recursos grandes pueden mantener brevemente la escena anterior mientras se prepara el destino; no se alarga el fade. El scroll se conserva durante navegación/recreación, sin prometer recuperar el punto exacto después de matar el proceso. No se añadió snap, reorder multitáctil, deshacer ni exportación. La fluidez y los codecs se deben contrastar en hardware físico, especialmente Android 24–27, muchas imágenes distintas, videos grandes, sonido, gestos rápidos, teclado y pantallas pequeñas. Todo sigue local, sin INTERNET, cuentas, backend ni telemetría, y con backup deshabilitado.
+
+Validación final de 5.1: **15 pruebas unitarias y 54 Android aprobadas** en la corrida completa. Después del ajuste del área de reproducción se revalidaron **17 casos de UI/reproducción**: siete por Gradle y diez directamente con AndroidJUnitRunner, porque el filtro de clases del ejecutor Gradle seleccionó solo la primera clase de la lista. Los diecisiete pasaron, incluyendo entrada/salida de colores, imágenes, GIF y video con las cuatro transiciones y un viewport horizontal.
+
+`test`, `connectedDebugAndroidTest`, `assembleDebug`, `lint` y `git diff --check` completados; lint: **0 errores y 20 avisos**. El APK definitivo se instaló y se comprobó `am force-stop` + reapertura a 360 dp: ocho tablas completas y bytes de recursos conservados, además de navegación base ON/tipos, cuadrícula y orden de herramientas. Se revisaron editor claro/oscuro, biblioteca y cuadernos; los fixtures de esa comprobación se retiraron y se restauraron su base/preferencias originales. Continúa sin INTERNET y con backup/transferencia deshabilitados. No se hizo commit ni push.

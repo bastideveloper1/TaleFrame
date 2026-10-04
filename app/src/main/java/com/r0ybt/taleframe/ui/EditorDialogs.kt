@@ -1,6 +1,7 @@
 package com.r0ybt.taleframe.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -39,6 +40,7 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
 fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList(), assignLibrary:()->Unit = {}) {
     var draft by remember(element.id) { mutableStateOf(element) }
     var showStyle by remember(element.id) { mutableStateOf(false) }
+    var destinationOpen by remember(element.id) {mutableStateOf(false)}
     var presetPicker by remember(element.id) { mutableStateOf<String?>(null) }
     AlertDialog(onDismissRequest = dismiss, title = { Text(when (element.kind) { "image" -> if(element.panel!=null) "Panel" else "Imagen"; "button" -> "Botón"; else -> "Cuadro de texto" }) }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -72,7 +74,8 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
             }
             if (element.kind == "button") {
                 Text("Lámina de destino")
-                DestinationPicker(slides, elements, draft.targetId, { draft = draft.copy(targetId = it) })
+                TextButton(onClick={destinationOpen=true}){Text("Elegir destino: ${slides.find {it.id==draft.targetId}?.name ?: "Sin destino"}")}
+                if(destinationOpen) DestinationDialog(slides,elements,draft.targetId,element.slideId,{destinationOpen=false}) {id->draft=draft.copy(targetId=id);destinationOpen=false}
                 TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
             }
             if (element.kind != "image") {
@@ -147,4 +150,14 @@ fun CalcoDialog(slides: List<Slide>, elements: List<Element>, current: Long?, op
             TextButton(onClick = { target = null }) { Text("Desactivar calco") }
         }
     }, confirmButton = { TextButton(onClick = { save(target, alpha) }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
+}
+
+@Composable
+fun QuickTextDialog(initial:String,dismiss:()->Unit,save:(String)->Unit) {
+    var text by remember {mutableStateOf(initial)}
+    val focus=remember {androidx.compose.ui.focus.FocusRequester()}
+    LaunchedEffect(Unit) {focus.requestFocus()}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Editar texto")},text={
+        OutlinedTextField(text,{text=it},label={Text("Texto")},modifier=Modifier.fillMaxWidth().then(Modifier.focusRequester(focus)),minLines=2,maxLines=6)
+    },confirmButton={TextButton(onClick={save(text)},enabled=text.isNotBlank()){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
 }

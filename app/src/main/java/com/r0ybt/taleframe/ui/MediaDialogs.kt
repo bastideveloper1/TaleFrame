@@ -48,8 +48,15 @@ fun SecondsField(label: String, value: Float, change: (Float) -> Unit) {
 @Composable
 fun TransitionControls(effect: Transition, change: (Transition) -> Unit) {
     Text("Transición de esta acción")
-    listOf("none" to "Ninguna", "fade" to "Fade", "left" to "Slide izquierda", "right" to "Slide derecha").forEach { (type, name) ->
-        Row { RadioButton(effect.type == type, { change(effect.copy(type = type)) }); Text(name, Modifier.padding(top = 12.dp)) }
+    listOf(listOf("none" to "Ninguna", "fade" to "Fade"),listOf("left" to "Deslizar izquierda", "right" to "Deslizar derecha")).forEach {row ->
+        Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            row.forEach {(type,name)->
+                Card(onClick={change(effect.copy(type=type))},modifier=Modifier.weight(1f),colors=CardDefaults.cardColors(containerColor=if(effect.type==type) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer)) {
+                    Text(when(type) {"none"->"A │ B";"fade"->"A ░ B";"left"->"A ← B";else->"B → A"},Modifier.padding(12.dp),style=MaterialTheme.typography.titleLarge)
+                    Text("${if(effect.type==type) "✓ " else ""}$name",Modifier.padding(8.dp),style=MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
     }
     if (effect.type != "none") {
         Text("Duración: ${effect.millis} ms")
@@ -79,4 +86,10 @@ fun SlideBehaviorDialog(slide: Slide, slides: List<Slide>, elements: List<Elemen
             }
         }
     }, confirmButton = { TextButton(onClick = { save(draft) }, enabled = !draft.autoEnabled || draft.autoTargetId != null) { Text("Guardar") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
+}
+
+@Composable
+fun TransitionDialog(initial:Transition,dismiss:()->Unit,apply:(Transition)->Unit) {
+    var effect by remember {mutableStateOf(initial)}
+    AlertDialog(onDismissRequest=dismiss,title={Text("Transición de esta acción")},text={Column(Modifier.verticalScroll(rememberScrollState())) {TransitionControls(effect) {effect=it}}},confirmButton={TextButton(onClick={apply(effect)}){Text("Aplicar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
 }
