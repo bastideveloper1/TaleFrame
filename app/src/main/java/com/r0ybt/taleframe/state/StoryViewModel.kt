@@ -6,6 +6,7 @@ import com.r0ybt.taleframe.data.Story
 import com.r0ybt.taleframe.data.ProjectBackup
 import android.net.Uri
 import com.r0ybt.taleframe.data.StoryRepository
+import com.r0ybt.taleframe.data.ElementUndoHistory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -16,6 +17,10 @@ import kotlinx.coroutines.withContext
 
 class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = StoryRepository(application)
+    private val undoHistory = ElementUndoHistory(repository)
+    data class UndoState(val slideId: Long? = null, val count: Int = 0, val revision: Long = 0)
+    private val mutableUndo = MutableStateFlow(UndoState())
+    val undoState = mutableUndo.asStateFlow()
     private val mutableStory = MutableStateFlow(Story())
     val story = mutableStory.asStateFlow()
     private val mutableError = MutableStateFlow<String?>(null)
@@ -99,13 +104,18 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
                     try {
                         repository.edit()
                         val loaded = repository.read()
-                        withContext(Dispatchers.Main) { mutableStory.value = loaded }
+                        withContext(Dispatchers.Main) {
+                            mutableStory.value = loaded
+                            mutableUndo.value = UndoState(undoHistory.slideId,undoHistory.count,undoHistory.revision)
+                        }
                     } catch (e: Exception) { withContext(Dispatchers.Main) { mutableError.value = e.message ?: "No se pudo guardar el cambio" } }
                 }
-            } finally { pendingImport?.close(); repository.close() }
+            } finally { pendingImport?.close(); undoHistory.beginSession(null); repository.close() }
         }
     }
-    fun edit(action: StoryRepository.() -> Unit) { edits.trySend(action) }
+    fun edit(action: StoryRepository.() -> Unit) { edits.trySend { undoHistory.edit(action) } }
+    fun setEditorSession(slideId: Long?) { edits.trySend { undoHistory.beginSession(slideId) } }
+    fun undo(slideId: Long) { edits.trySend { if (undoHistory.slideId == slideId) undoHistory.undo() } }
     fun clearError() { mutableError.value = null }
     override fun onCleared() { edits.close() }
 }

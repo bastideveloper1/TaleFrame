@@ -45,7 +45,7 @@ class DogfoodingUiTest {
         }}
         compose.onNodeWithTag("element-1").performTouchInput {doubleClick()}
         compose.onNodeWithText("Contexto 1").assertExists();assertEquals(1L,selected)
-        compose.onNodeWithText("Editar texto").performClick();compose.onNode(hasSetTextAction()).performTextReplacement("Nuevo");compose.onNodeWithText("Guardar").performClick();assertEquals("Nuevo",e.text)
+        compose.onNodeWithText("Editar texto").performClick();compose.onNode(hasSetTextAction()).assertIsFocused();compose.onNode(hasSetTextAction()).performTextReplacement("Nuevo");compose.onNodeWithText("Guardar").performClick();assertEquals("Nuevo",e.text)
         val stage=compose.onNodeWithTag("stage").fetchSemanticsNode().boundsInRoot
         val b=compose.onNodeWithTag("element-1").fetchSemanticsNode().boundsInRoot
         compose.onNodeWithTag("stage").performTouchInput {down(b.center-stage.topLeft);advanceEventTime(16);moveBy(Offset(220f,0f));up()}

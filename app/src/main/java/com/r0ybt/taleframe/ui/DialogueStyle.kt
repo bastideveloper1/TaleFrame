@@ -1,5 +1,9 @@
 package com.r0ybt.taleframe.ui
 
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.foundation.text.TextAutoSize
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -52,7 +56,16 @@ fun DialogueVisual(e: Element, font: TextUnit, padding: Dp, modifier: Modifier =
         .then(if(e.style.borderWidth>0f) Modifier.border(BorderStroke(e.style.borderWidth.dp,Color(e.style.borderColor)),shape) else Modifier)
     var overflow by androidx.compose.runtime.remember(e.id,e.text,e.style) {androidx.compose.runtime.mutableStateOf(false)}
     @Composable fun Content() {
-        Text(if(e.style.showName && e.speakerName.isNotBlank()) "${e.speakerName}\n${e.text}" else e.text,
+        if(e.baseNavigation!=null) {
+            val maxFont=font*e.style.textScale
+            BasicText(if(e.style.showName && e.speakerName.isNotBlank()) "${e.speakerName}\n${e.text}" else e.text,Modifier.fillMaxWidth(),
+                style=MaterialTheme.typography.bodyLarge.copy(color=Color(e.textColor),fontSize=maxFont,lineHeight=1.25.em,
+                    fontFamily=family,fontWeight=if(e.style.bold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle=if(e.style.italic) FontStyle.Italic else FontStyle.Normal,textAlign=align),
+                maxLines=2,overflow=TextOverflow.Ellipsis,
+                autoSize=TextAutoSize.StepBased(minFontSize=if(maxFont.value<9f) maxFont else 9.sp,maxFontSize=maxFont),
+                onTextLayout={overflow=it.hasVisualOverflow})
+        } else Text(if(e.style.showName && e.speakerName.isNotBlank()) "${e.speakerName}\n${e.text}" else e.text,
             modifier=if(e.width>0f && e.style.alignment!="start") Modifier.fillMaxWidth() else Modifier,
             color=Color(e.textColor),fontSize=font*e.style.textScale,lineHeight=font*e.style.textScale*1.25f,fontFamily=family,fontWeight=if(e.style.bold) FontWeight.Bold else FontWeight.Normal,fontStyle=if(e.style.italic) FontStyle.Italic else FontStyle.Normal,textAlign=align,overflow=TextOverflow.Ellipsis,onTextLayout={overflow=it.hasVisualOverflow})
     }
@@ -64,6 +77,9 @@ fun DialogueVisual(e: Element, font: TextUnit, padding: Dp, modifier: Modifier =
         Box(Modifier.fillMaxSize().padding(horizontal=maxOf(padding,insetX),vertical=maxOf(padding,insetY))) {Content()}
     } else if(e.style.shape in listOf("speech","thought") && e.height>0f) BoxWithConstraints(surface) {
         Box(Modifier.fillMaxSize().padding(start=maxOf(padding,maxWidth*(if(e.style.shape=="thought") .12f else .06f)),end=maxOf(padding,maxWidth*(if(e.style.shape=="thought") .12f else .06f)),top=padding,bottom=maxHeight*.2f)) {Content()}
+    } else if(e.baseNavigation!=null && e.style.alignment=="center" && e.width>0f && e.height>0f) BoxWithConstraints(surface) {
+        val inset=minOf(padding,6.dp,maxHeight*.08f,maxWidth*.06f)
+        Box(Modifier.fillMaxSize().padding(inset),contentAlignment=Alignment.Center) {Content()}
     } else Box(surface.padding(padding)) {Content()}
     if(editing && overflow) Text("Texto no cabe",color=MaterialTheme.colorScheme.onErrorContainer,fontSize=font*.6f,modifier=Modifier.align(Alignment.BottomEnd).background(MaterialTheme.colorScheme.errorContainer))
     }

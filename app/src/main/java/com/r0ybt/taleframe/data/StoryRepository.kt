@@ -17,6 +17,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     SQLiteOpenHelper(context.applicationContext, databaseName, null, 6) {
     private val imageDir = File(context.filesDir, if (databaseName == "taleframe.db") "backgrounds" else "backgrounds-$databaseName").apply { mkdirs() }
     internal val mediaDirectory: File get() = imageDir
+    internal var undoMediaPaths: Set<String> = emptySet()
     val library = LibraryStore(this)
     val templates = TemplateStore(this)
     private val resolver = context.contentResolver
@@ -167,15 +168,24 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         val layer = if (e.id == 0L) readableDatabase.rawQuery("SELECT COALESCE(MAX(layer_order)+1,0) FROM elements WHERE slide_id=?",arrayOf(e.slideId.toString())).use { it.moveToFirst();it.getInt(0) } else e.layer
         val values = ContentValues().apply {
             put("base_navigation",e.baseNavigation);put("resource_id",e.resourceId);put("character_id",e.characterId);put("expression_id",e.expressionId);put("preset_id",e.presetId);put("settings", e.settings()); put("slide_id", e.slideId); put("kind", e.kind); put("text", e.text)
-            put("x", boundedPosition(e.x)); put("y", boundedPosition(e.y))
+            put("x", e.storedPosition(e.x)); put("y", e.storedPosition(e.y))
             put("text_color", e.textColor); put("background_color", e.backgroundColor); put("target_id", e.targetId)
-            put("image", if (e.media.type == "slideshow") e.media.frames.first() else e.image); put("width", boundedValue(e.width, 0f, 1f, 0f)); put("height", boundedValue(e.height, 0f, 1f, 0f))
+            put("image", if (e.media.type == "slideshow") e.media.frames.first() else e.image); put("width", e.storedSize(e.width)); put("height", e.storedSize(e.height))
             put("rotation", boundedValue(e.rotation, -180f, 180f, 0f)); put("flipped", e.flipped)
             put("opacity", boundedPosition(e.opacity)); put("locked", e.locked); put("layer_order", layer)
         }
-        val result = if (e.id == 0L) writableDatabase.insertOrThrow("elements", null, values) else {
-            writableDatabase.update("elements", values, "id=?", arrayOf(e.id.toString())); e.id
+        val previousSize = if (e.id != 0L && e.baseNavigation != null) readableDatabase.rawQuery(
+            "SELECT width,height FROM elements WHERE id=?",arrayOf(e.id.toString())).use {if(it.moveToFirst()) it.getFloat(0) to it.getFloat(1) else null} else null
+        val width=values.getAsFloat("width"); val height=values.getAsFloat("height")
+        var result=e.id
+        fun write() {
+            result = if (e.id == 0L) writableDatabase.insertOrThrow("elements", null, values) else {
+                writableDatabase.update("elements", values, "id=?", arrayOf(e.id.toString())); e.id
+            }
         }
+        if(previousSize != null && previousSize != (width to height)) transaction {
+            write(); syncBaseButtonSize(e,width,height)
+        } else write()
         if (!writableDatabase.inTransaction()) cleanImages()
         return result
     }
@@ -184,6 +194,9 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         if (before.id == 0L) { saveElement(edited); return }
         val current = read().elements.find { it.id == before.id } ?: return
         saveElement(current.copy(
+            freePosition = if (before.freePosition != edited.freePosition) edited.freePosition else current.freePosition,
+            x = if (before.x != edited.x) edited.x else current.x,
+            y = if (before.y != edited.y) edited.y else current.y,
             panel = if(before.panel != edited.panel) edited.panel else current.panel,
             text = if (before.text != edited.text) edited.text else current.text,
             textColor = if (before.textColor != edited.textColor) edited.textColor else current.textColor,
@@ -211,15 +224,33 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     fun toggleLock(id: Long) { writableDatabase.execSQL("UPDATE elements SET locked=1-locked WHERE id=?", arrayOf(id)) }
 
     // Narrow update avoids a queued drag overwriting a later property edit.
-    fun moveElement(id: Long, x: Float, y: Float) {
-        writableDatabase.update("elements", ContentValues().apply { put("x", boundedPosition(x)); put("y", boundedPosition(y)) }, "id=? AND locked=0", arrayOf(id.toString()))
-    }
-    fun resizeElement(id: Long, width: Float, height: Float, x: Float? = null, y: Float? = null) {
+    fun moveElement(id: Long, x: Float, y: Float, freePosition: Boolean? = null) {
+        val current = read().elements.find { it.id == id } ?: return
         writableDatabase.update("elements", ContentValues().apply {
-            put("width", boundedValue(width, .05f, 1f, .3f)); put("height", boundedValue(height, .04f, 1f, .15f))
-            if (x != null) put("x", boundedPosition(x))
-            if (y != null) put("y", boundedPosition(y))
+            put("x", current.storedPosition(x)); put("y", current.storedPosition(y))
+            if (freePosition != null && current.supportsFreePlacement) put("settings", current.copy(freePosition=freePosition).settings())
         }, "id=? AND locked=0", arrayOf(id.toString()))
+    }
+    fun resizeElement(id: Long, width: Float, height: Float, x: Float? = null, y: Float? = null, freePosition: Boolean? = null) {
+        val current = read().elements.find { it.id == id } ?: return
+        transaction {
+            val newWidth=current.storedSize(width,.05f,.3f)
+            val newHeight=current.storedSize(height,.04f,.15f)
+            val changed=update("elements", ContentValues().apply {
+                put("width", newWidth); put("height", newHeight)
+                if (x != null) put("x", current.storedPosition(x))
+                if (y != null) put("y", current.storedPosition(y))
+                if (freePosition != null && current.supportsFreePlacement) put("settings", current.copy(freePosition=freePosition).settings())
+            }, "id=? AND locked=0", arrayOf(id.toString()))
+            if(changed>0 && (current.width!=newWidth || current.height!=newHeight)) syncBaseButtonSize(current,newWidth,newHeight)
+        }
+    }
+    /** Only the tagged opposite role on this slide shares dimensions; text, targets and locks stay independent. */
+    private fun SQLiteDatabase.syncBaseButtonSize(source: Element, width: Float, height: Float) {
+        val opposite=when(source.baseNavigation) {"previous"->"next";"next"->"previous";else->return}
+        val peer=rawQuery("SELECT id FROM elements WHERE slide_id=? AND base_navigation=? ORDER BY layer_order,id LIMIT 1",
+            arrayOf(source.slideId.toString(),opposite)).use {if(it.moveToFirst()) it.getLong(0) else null} ?: return
+        update("elements",ContentValues().apply {put("width",width);put("height",height)},"id=?",arrayOf(peer.toString()))
     }
     fun layer(id: Long, front: Boolean) {
         val story = read()
@@ -232,7 +263,7 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
     }
     fun duplicateElement(id: Long): Long {
         val original = read().elements.first { it.id == id }
-        return saveElement(original.copy(id = 0, baseNavigation = null, x = boundedPosition(original.x + .04f), y = boundedPosition(original.y + .04f)))
+        return saveElement(original.copy(id = 0, baseNavigation = null, x = original.storedPosition(original.x + .04f), y = original.storedPosition(original.y + .04f)))
     }
     fun reorderSlide(id: Long, delta: Int) {
         val story = read()
@@ -287,10 +318,14 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
                 existing.drop(1).forEach {writableDatabase.delete("elements","id=?",arrayOf(it.id.toString()))}
                 if(target==null) existing.firstOrNull()?.let {writableDatabase.delete("elements","id=?",arrayOf(it.id.toString()))}
                 else if(existing.isNotEmpty()) writableDatabase.update("elements",ContentValues().apply {put("target_id",target)},"id=?",arrayOf(existing.first().id.toString()))
-                else saveElement(Element(0,slide.id,"button",if(role=="previous") "← Anterior" else "Siguiente →",
-                    x=if(role=="previous") .045f else .955f,y=.965f,width=.32f,height=.085f,
-                    textColor=-1,backgroundColor=0xFF8E435F.toInt(),targetId=target,baseNavigation=role,
-                    style=VisualStyle(shape="rounded")))
+                else {
+                    // A newly needed counterpart inherits an explicitly chosen size, never restyles old buttons.
+                    val peer=story.elements.firstOrNull {it.slideId==slide.id && it.baseNavigation==(if(role=="previous") "next" else "previous")}
+                    saveElement(Element(0,slide.id,"button",if(role=="previous") "← Anterior" else "Siguiente →",
+                        x=if(role=="previous") .045f else .955f,y=.94f,width=peer?.width ?: .24f,height=peer?.height ?: .07f,
+                        textColor=-16777216,backgroundColor=-1,targetId=target,baseNavigation=role,
+                        style=VisualStyle(shape="rounded",alignment="center",textScale=.8f,backgroundOpacity=.75f)))
+                }
             }
         }
     }
@@ -422,10 +457,48 @@ class StoryRepository(context: Context, databaseName: String = "taleframe.db") :
         } else check(file.renameTo(destination)) { "No se pudo guardar el recurso" }
         return destination.path
     }
+    internal fun snapshotElements(slideId: Long): ElementSnapshot {
+        val rows = mutableListOf<ContentValues>()
+        readableDatabase.rawQuery("SELECT * FROM elements WHERE slide_id=? ORDER BY layer_order,id",arrayOf(slideId.toString())).use { cursor ->
+            while (cursor.moveToNext()) rows += ContentValues().apply {
+                cursor.columnNames.forEachIndexed { index, column ->
+                    when (cursor.getType(index)) {
+                        android.database.Cursor.FIELD_TYPE_NULL -> putNull(column)
+                        android.database.Cursor.FIELD_TYPE_INTEGER -> put(column,cursor.getLong(index))
+                        android.database.Cursor.FIELD_TYPE_FLOAT -> put(column,cursor.getDouble(index))
+                        android.database.Cursor.FIELD_TYPE_STRING -> put(column,cursor.getString(index))
+                        android.database.Cursor.FIELD_TYPE_BLOB -> put(column,cursor.getBlob(index))
+                    }
+                }
+            }
+        }
+        val paths = buildSet {
+            rows.forEach { row ->
+                row.getAsString("image")?.let(::add)
+                addAll(Element(0,slideId,"image","").withSettings(row.getAsString("settings") ?: "{}").media.frames)
+            }
+        }
+        return ElementSnapshot(slideId,rows,paths)
+    }
+    internal fun restoreElements(snapshot: ElementSnapshot) {
+        transaction {
+            rawQuery("SELECT 1 FROM slides WHERE id=?",arrayOf(snapshot.slideId.toString())).use { require(it.moveToFirst()) {"La lámina ya no existe"} }
+            val currentIds = mutableSetOf<Long>()
+            rawQuery("SELECT id FROM elements WHERE slide_id=?",arrayOf(snapshot.slideId.toString())).use { while(it.moveToNext()) currentIds += it.getLong(0) }
+            val restoredIds = snapshot.rows.map {it.getAsLong("id")}.toSet()
+            (currentIds-restoredIds).forEach {delete("elements","id=?",arrayOf(it.toString()))}
+            snapshot.rows.forEach {row ->
+                val id=row.getAsLong("id")
+                if(id in currentIds) update("elements",row,"id=? AND slide_id=?",arrayOf(id.toString(),snapshot.slideId.toString()))
+                else insertOrThrow("elements",null,row)
+            }
+        }
+    }
     /** Called once all new references have been attached, never in the middle of imports. */
     fun cleanImages() {
         val story = read()
         val used = buildSet {
+            addAll(undoMediaPaths)
             addAll(story.resources.map { it.path })
             story.templates.forEach { t -> t.slide.image?.let(::add);t.slide.audio?.let(::add);addAll(t.slide.media.frames);t.elements.forEach {e->e.image?.let(::add);addAll(e.media.frames)} }
             story.slides.forEach { s -> s.image?.let(::add); s.audio?.let(::add); addAll(s.media.frames) }

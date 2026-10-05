@@ -5,6 +5,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LibraryLogicTest {
+    @Test fun newCardsHaveNoDefaultText() {
+        assertEquals("",styledElement(1,null).text)
+        assertEquals("",styledElement(1,Preset(1,1,"Diálogo")).text)
+        assertEquals("",styledElement(1,Preset(2,1,"Botón","button")).text)
+    }
+
     @Test fun referenceIndexCountsEachInstanceOnceAcrossSlideshowPathsAndMetadata() {
         val resources=listOf(Resource(1,1,"A","image","image","/a"),Resource(2,1,"B","image","image","/b"),Resource(3,2,"Other","image","image","/a"))
         val story=Story(slides=listOf(Slide(1,1,"A",image="/a",backgroundResourceId=1),Slide(2,2,"Other")),

@@ -59,7 +59,7 @@ internal fun Preset.settings(): String = Element(0,0,"text","",textColor=textCol
 internal fun Preset.withSettings(raw: String): Preset = Element(0,0,"text","").withSettings(raw).let { copy(style=it.style,transition=it.transition) }
 fun styledElement(slideId: Long, preset: Preset?, speaker: String = "", characterId: Long? = null): Element {
     val button = preset?.kind == "button"
-    return Element(0, slideId, if (button) "button" else "text", if (button) "Continuar" else "Escribe tu diálogo…",
+    return Element(0, slideId, if (button) "button" else "text", "",
         y=if (button) .7f else .65f, width=if (button) .28f else .75f, height=if (button) .12f else .22f,
         textColor=preset?.textColor ?: -16777216, backgroundColor=preset?.backgroundColor ?: -1,
         style=preset?.style ?: VisualStyle(shape="rounded"), transition=preset?.transition ?: Transition(),

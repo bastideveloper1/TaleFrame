@@ -20,7 +20,7 @@ class DogfoodingFlowTest {
             tap("+ Crear lámina");name("Uno");waitText("Uno");tap("+ Crear lámina");name("Dos");waitText("Dos");tap("Dos")
             tap("+ Texto");name("Original","Texto");waitText("Original")
             val before=repo.read().elements.single {e->repo.read().slides.any {it.id==e.slideId && it.projectId==p}}
-            compose.onNodeWithTag("element-${before.id}").performTouchInput {doubleClick()};compose.onNodeWithText("Propiedades").assertExists();compose.onNodeWithText("Editar texto").performClick();name("Corregido","Texto")
+            compose.onNodeWithTag("element-${before.id}").performTouchInput {doubleClick()};compose.onNodeWithText("Propiedades").assertExists();listOf("Traer al frente","Enviar atrás","Guardar como preset","Duplicar","Bloquear","Eliminar").forEach {compose.onNodeWithText(it).assertExists()};compose.onNodeWithText("Editar texto").performClick();name("Corregido","Texto")
             compose.waitUntil(10_000) {repo.read().elements.first {it.id==before.id}.text=="Corregido"}
             val edited=repo.read().elements.first {it.id==before.id};assertEquals(before.copy(text="Corregido"),edited)
             compose.onAllNodesWithText("▶ Probar desde aquí")[0].performClick();compose.onNodeWithText("Corregido").assertExists();compose.onNodeWithText("Mostrar nombre de lámina").performClick();compose.onNodeWithText("Lámina 2 · Dos").assertExists();compose.onNodeWithText("✓ Mostrar nombre de lámina").performClick();compose.onNodeWithText("Lámina 2 · Dos").assertDoesNotExist()

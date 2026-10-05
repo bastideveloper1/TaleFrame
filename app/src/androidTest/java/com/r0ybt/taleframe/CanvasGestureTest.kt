@@ -71,6 +71,25 @@ class CanvasGestureTest {
         assertEquals(before,compose.onNodeWithTag("element-1").fetchSemanticsNode().boundsInRoot)
     }
 
+    @Test fun undoClearsUnacknowledgedGesturePreviewWithoutAnotherTouch() {
+        val original=Element(1,1,"image","",image="/missing",width=.4f,height=.3f,x=.2f,y=.2f)
+        var undoRevision by mutableLongStateOf(0)
+        var commits=0
+        compose.setContent {MaterialTheme {
+            SlideCanvas(Slide(1,1,"Undo"),listOf(original),Modifier.fillMaxSize(),editing=true,
+                onMove={commits++},undoRevision=undoRevision)
+        }}
+        val stage=compose.onNodeWithTag("stage").fetchSemanticsNode().boundsInRoot
+        val before=compose.onNodeWithTag("element-1").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("stage").performTouchInput {
+            down(before.center-stage.topLeft);advanceEventTime(16);moveBy(Offset(80f,80f));up()
+        }
+        assertEquals(1,commits)
+        assertNotEquals(before,compose.onNodeWithTag("element-1").fetchSemanticsNode().boundsInRoot)
+        compose.runOnIdle {undoRevision++}
+        assertEquals(before,compose.onNodeWithTag("element-1").fetchSemanticsNode().boundsInRoot)
+    }
+
     @Test fun resizeUsesHandleAndCalcoActionsNeverAppearInPlayer() {
         var element by mutableStateOf(Element(1,1,"text","Actual",width=.4f,height=.2f))
         var selected by mutableStateOf<Long?>(1)

@@ -47,9 +47,9 @@ class LibraryFlowTest {
             val image=repo.read().elements.first {it.characterId==character && it.kind=="image"}
             compose.onNodeWithTag("element-${image.id}").performTouchInput {down(center);advanceEventTime(16);moveBy(Offset(80f,60f));up()}
             compose.waitUntil(10_000) {repo.read().elements.first {it.id==image.id}.x>image.x}
-            tap("Bloquear");compose.waitUntil(10_000) {repo.read().elements.first {it.id==image.id}.locked}
+            compose.onNodeWithTag("element-${image.id}").performTouchInput {doubleClick()};tap("Bloquear");compose.waitUntil(10_000) {repo.read().elements.first {it.id==image.id}.locked}
             val before=repo.read().elements.first {it.id==image.id}
-            tap("Cambiar expresión");tap("Feliz")
+            compose.onNodeWithTag("element-${image.id}").performTouchInput {doubleClick()};tap("Cambiar expresión");tap("Feliz")
             compose.waitUntil(10_000) {repo.read().elements.first {it.id==image.id}.expressionId!=before.expressionId}
             val after=repo.read().elements.first {it.id==image.id}
             assertEquals(before.x,after.x,0f);assertEquals(before.y,after.y,0f);assertEquals(before.width,after.width,0f);assertTrue(after.locked)
@@ -57,7 +57,7 @@ class LibraryFlowTest {
             compose.waitUntil(10_000) {repo.read().elements.any {it.characterId==character && it.kind=="text"}}
             val dialog=repo.read().elements.first {it.characterId==character && it.kind=="text"}
             assertTrue(dialog.style.showName);assertEquals("Guillermo",dialog.speakerName)
-            compose.onNodeWithText("Guillermo\nEscribe tu diálogo…").assertExists()
+            compose.onNodeWithText("Guillermo\n").assertExists()
             tap("+ Diálogo");tap("Narrador")
             compose.waitUntil(10_000) {repo.read().elements.count {it.kind=="text"}==2}
             val narrator=repo.read().elements.first {it.kind=="text" && it.characterId==null}
@@ -65,7 +65,7 @@ class LibraryFlowTest {
             val snapshot=repo.read();compose.activityRule.scenario.recreate();await("Escena biblioteca")
             assertEquals(snapshot,repo.read());compose.onNodeWithTag("element-${image.id}").assertExists()
             compose.onAllNodesWithText("▶ Probar desde aquí")[0].performClick();compose.onNodeWithText("+ Personaje").assertDoesNotExist();compose.onNodeWithText("Cambiar expresión").assertDoesNotExist()
-            compose.onNodeWithText("Guillermo\nEscribe tu diálogo…").assertExists()
+            compose.onNodeWithText("Guillermo\n").assertExists()
         } finally {compose.activityRule.scenario.close();project?.let {repo.delete("projects",it)};repo.close();files.forEach {it.delete()}}
     }
 }

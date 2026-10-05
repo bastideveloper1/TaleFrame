@@ -27,7 +27,7 @@ class TemplateFlowTest {
             tap("Cambiar portada");tap("Portada PNG");compose.waitUntil(10_000) {repo.read().projects.first {it.id==project}.coverResourceId==r}
             tap("Página collage");tap("Elementos")
             val panel=repo.read().elements.first {e->repo.read().slides.any {it.id==e.slideId && it.projectId==project}}
-            tap("Imagen ${panel.id}");tap("Editar");tap("Elegir imagen de Biblioteca");tap("Portada PNG")
+            tap("Imagen ${panel.id}");compose.onNodeWithTag("element-${panel.id}").performTouchInput {doubleClick()};tap("Propiedades");tap("Elegir imagen de Biblioteca");tap("Portada PNG")
             compose.waitUntil(10_000) {repo.read().elements.first {it.id==panel.id}.image!=null}
             tap("Guardar como plantilla");compose.onNode(hasSetTextAction() and hasText("Nombre")).performTextReplacement("Mi collage");tap("Guardar")
             compose.waitUntil(10_000) {repo.read().templates.any {it.projectId==project && it.name=="Mi collage"}}

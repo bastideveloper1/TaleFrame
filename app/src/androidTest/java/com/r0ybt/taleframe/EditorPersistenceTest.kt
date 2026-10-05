@@ -17,6 +17,26 @@ import java.util.UUID
 class EditorPersistenceTest {
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun newEmptySlideHasNoDefaultTextAndExistingTextSurvivesReopen() {
+        val name="empty-slide-${UUID.randomUUID()}.db"
+        val repo=StoryRepository(context,name)
+        var empty=0L
+        var existing=0L
+        try {
+            val project=repo.createProject("Proyecto")
+            existing=repo.createSlide(project,"Existente")
+            repo.saveElement(Element(0,existing,"text","Conservar título"))
+            empty=repo.templates.createSlide(project,"Lámina nueva",null)
+            assertTrue(repo.read().elements.none {it.slideId==empty})
+        } finally {repo.close()}
+        val reopened=StoryRepository(context,name)
+        try {
+            assertEquals("Lámina nueva",reopened.read().slides.single {it.id==empty}.name)
+            assertTrue(reopened.read().elements.none {it.slideId==empty})
+            assertEquals("Conservar título",reopened.read().elements.single {it.slideId==existing}.text)
+        } finally {reopened.close();context.deleteDatabase(name)}
+    }
+
     @Test fun migrationKeepsMvpIdsCompositionsConnectionsAndSequence() {
         val name = "migration-${UUID.randomUUID()}.db"
         val file = context.getDatabasePath(name)

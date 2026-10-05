@@ -20,7 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -47,13 +47,15 @@ fun SlideCanvas(
     destinations: List<Slide> = emptyList(), reference: Slide? = null, referenceElements: List<Element> = emptyList(),
     referenceOpacity: Float = .35f, movingBackground: Boolean = false, onBackgroundMove: (Slide) -> Unit = {},
     preview: Boolean = false, onAction: ((Long, Transition) -> Unit)? = null,
-    onContext: (Element) -> Unit = {}, onSwipe: (Int) -> Unit = {}, grid: String = "Off", positionIndicator:String? = null
+    onContext: (Element) -> Unit = {}, onSwipe: (Int) -> Unit = {}, grid: String = "Off", positionIndicator:String? = null, undoRevision: Long = 0
 ) {
     BoxWithConstraints(modifier.background(MaterialTheme.colorScheme.surfaceContainer), contentAlignment = Alignment.Center) {
         val width = minOf(maxWidth, maxHeight * .75f)
         val height = width / .75f
         var stage by remember(slide.id) { mutableStateOf(IntSize.Zero) }
         var draft by remember(slide.id) { mutableStateOf<Element?>(null) }
+        // Discard an unacknowledged gesture preview after Undo, without recreating media owners.
+        LaunchedEffect(undoRevision) {draft=null}
         var backgroundDraft by remember(slide.id) { mutableStateOf<Slide?>(null) }
         val measured = remember(slide.id) { mutableStateMapOf<Long, IntSize>() }
         LaunchedEffect(elements) {
@@ -95,9 +97,16 @@ fun SlideCanvas(
                 }
                 val selected = ordered.find { it.id == currentSelection }
                 val selectedBounds = selected?.let(::bounds)
-                val handle = selected != null && !selected.locked && selectedBounds != null && selectedBounds.width >= touchSize && selectedBounds.height >= touchSize &&
-                    (down.position - Offset(selectedBounds.left + selectedBounds.width, selectedBounds.top + selectedBounds.height)).getDistance() < handleRadius && selected.rotation == 0f
-                val hit = if (handle) selected else ordered.asReversed().firstOrNull { bounds(it).contains(down.position.x, down.position.y, it.rotation, 0f) }
+                val handlePosition = selectedBounds?.let { b ->
+                    if (selected?.supportsFreePlacement == true) resizeHandle(b,stage.width.toFloat(),stage.height.toFloat(),with(density) {12.dp.toPx()})
+                    else Offset(b.left+b.width,b.top+b.height)
+                }
+                val handle = selected != null && !selected.locked && selectedBounds != null && (selected.baseNavigation!=null || (selectedBounds.width >= touchSize && selectedBounds.height >= touchSize)) &&
+                    (down.position - requireNotNull(handlePosition)).getDistance() < (if(selected.baseNavigation!=null) minOf(handleRadius,selectedBounds.width/3f) else handleRadius) && selected.rotation == 0f
+                val offstageMove = selected?.supportsFreePlacement == true && selected.rotation==0f &&
+                    selectedBounds?.intersectsStage(stage.width.toFloat(),stage.height.toFloat()) == false &&
+                    (down.position-Offset(stage.width/2f,stage.height/2f)).getDistance()<handleRadius
+                val hit = if (handle || offstageMove) selected else ordered.asReversed().firstOrNull { bounds(it).contains(down.position.x, down.position.y, it.rotation, 0f) }
                     ?: ordered.asReversed().firstOrNull { bounds(it).contains(down.position.x, down.position.y, it.rotation, touchSize) }
                 val startBounds = hit?.let(::bounds)
                 val adjustBackground = backgroundMode && currentSlide.image != null && currentSlide.backgroundMode == "manual" && !currentSlide.backgroundLocked
@@ -135,7 +144,10 @@ fun SlideCanvas(
                                 backgroundDraft = changedBackground
                             } else if (hit != null && !hit.locked) {
                                 val b = requireNotNull(startBounds)
-                                changed = if (handle) {
+                                changed = if (hit.supportsFreePlacement) {
+                                    if (handle) resizeFreeElement(hit,b,stage.width.toFloat(),stage.height.toFloat(),accumulated)
+                                    else moveFreeElement(hit,b,stage.width.toFloat(),stage.height.toFloat(),accumulated)
+                                } else if (handle) {
                                     val newWidth = boundedValue((b.width + accumulated.x) / stage.width.coerceAtLeast(1), .05f, 1f, .3f)
                                     val newHeight = boundedValue((b.height + accumulated.y) / stage.height.coerceAtLeast(1), .04f, 1f, .15f)
                                     hit.copy(width = newWidth, height = newHeight,
@@ -169,13 +181,29 @@ fun SlideCanvas(
                 }
             }
         } else Modifier
-        Box(Modifier.size(width, height).onSizeChanged { stage = it }.clip(RoundedCornerShape(if (editing) 8.dp else 0.dp)).then(gesture).testTag("stage")) {
+        Box(Modifier.size(width, height).onSizeChanged { stage = it }.clipToBounds().then(gesture).testTag("stage")) {
             // Current composition is translucent only in editor calco mode. Reference is inert.
             if (editing && reference != null) {
                 Composition(reference, referenceElements, stage, emptyMap(), null, false, null, false, emptyList(), true, {})
             }
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editing && reference != null) 1f - referenceOpacity.coerceIn(0f, .9f) else 1f }) {
                 Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate, onAction) { id, size -> measured[id] = size }
+            }
+            val handleElement = (draft ?: elements.find {it.id==selectedId})?.takeIf {it.id==selectedId && it.supportsFreePlacement && it.rotation==0f}
+            handleElement?.let {e ->
+                val m=measured[e.id] ?: IntSize.Zero
+                val b=elementBounds(e,stage.width.toFloat(),stage.height.toFloat(),m.width.toFloat(),m.height.toFloat())
+                if(editing && !b.intersectsStage(stage.width.toFloat(),stage.height.toFloat())) {
+                    Box(Modifier.align(Alignment.Center).size(24.dp).background(MaterialTheme.colorScheme.primaryContainer)
+                        .testTag("offstage-move-${e.id}"),contentAlignment=Alignment.Center) {
+                        Text(if(e.locked) "🔒" else "↔",modifier=Modifier.semantics {contentDescription="Mover elemento fuera de la tarjeta"})
+                    }
+                }
+                if(!e.locked && b.width>=touchSize && b.height>=touchSize) {
+                    val center=resizeHandle(b,stage.width.toFloat(),stage.height.toFloat(),with(density) {12.dp.toPx()})
+                    if(editing) Box(Modifier.offset {IntOffset((center.x-with(density) {6.dp.toPx()}).roundToInt(),(center.y-with(density) {6.dp.toPx()}).roundToInt())}
+                        .size(12.dp).background(MaterialTheme.colorScheme.primary).testTag("resize-handle-${e.id}"))
+                }
             }
             if(editing && positionIndicator!=null) Text(positionIndicator,Modifier.align(Alignment.TopCenter).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(8.dp),style=MaterialTheme.typography.labelMedium)
             if(editing && grid!="Off") {
@@ -213,6 +241,8 @@ private fun Composition(
     editing: Boolean, selectedId: Long?, showActions: Boolean, destinations: List<Slide>, preview: Boolean,
     navigate: (Long) -> Unit, action: ((Long, Transition) -> Unit)? = null, measure: (Long, IntSize) -> Unit = { _, _ -> }
 ) {
+    val resizingBase=draft?.takeIf {d -> d.baseNavigation!=null && elements.firstOrNull {it.id==d.id}?.let {it.width!=d.width || it.height!=d.height}==true}
+    val resizePeer=resizingBase?.let {d -> elements.firstOrNull {it.slideId==d.slideId && it.baseNavigation==(if(d.baseNavigation=="previous") "next" else "previous")}?.id}
     Box(Modifier.fillMaxSize().background(Color(slide.color))) {
         if (slide.image != null) LocalMedia(slide.image, slide.media,
             Modifier.fillMaxSize().graphicsLayer {
@@ -225,7 +255,8 @@ private fun Composition(
         if (editing && slide.autoEnabled) Text("⏱ ${slide.autoSeconds} s → ${destinations.find { it.id == slide.autoTargetId }?.name ?: "Sin destino"}", color = Color.White,
             modifier = Modifier.align(Alignment.TopEnd).background(Color(0xAA000000)))
         elements.sortedWith(compareBy<Element> { it.layer }.thenBy { it.id }).forEach { original -> key(original.id) {
-            val e = draft?.takeIf { it.id == original.id } ?: original
+            val e = draft?.takeIf { it.id == original.id }
+                ?: if(original.id==resizePeer) original.copy(width=resizingBase.width,height=resizingBase.height) else original
             ElementVisual(e, stage, measured[e.id] ?: IntSize.Zero, editing, selectedId == e.id, preview, { target -> if (action != null) action(target, e.transition) else navigate(target) }) { measure(e.id, it) }
             if (editing && showActions && e.kind == "button") {
                 val size = measured[e.id] ?: IntSize.Zero
@@ -243,7 +274,7 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
     navigate: (Long) -> Unit, onMeasure: (IntSize) -> Unit) {
     val density = LocalDensity.current
     val b = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), measured.width.toFloat(), measured.height.toFloat())
-    val dimensions = if (e.width > 0 && e.height > 0) with(density) { Modifier.size((stage.width * e.width).toDp(), (stage.height * e.height).toDp()) }
+    val dimensions = if (e.width > 0 && e.height > 0) with(density) { Modifier.wrapContentSize(Alignment.TopStart, unbounded = e.supportsFreePlacement).size((stage.width * e.width).toDp(), (stage.height * e.height).toDp()) }
         else with(density) { Modifier.widthIn(max = (stage.width * .8f).toDp()).heightIn(max = stage.height.toDp()) }
     val padding = with(density) { (stage.width * .025f).toDp() }
     val font = with(density) { (stage.width * .045f).toSp() }
@@ -268,7 +299,7 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
         }
         if(e.kind=="button" && e.style.buttonEffect=="glow") Box(Modifier.matchParentSize().border(3.dp,Color(e.textColor).copy(alpha=.25f*e.opacity),RoundedCornerShape(12.dp)))
         if(selected && editing && e.locked) Text("🔒",color=MaterialTheme.colorScheme.onTertiaryContainer,modifier=Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.tertiaryContainer))
-        if (selected && editing && !e.locked && e.rotation == 0f && b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }) {
+        if (selected && editing && !e.supportsFreePlacement && !e.locked && e.rotation == 0f && (e.baseNavigation!=null || (b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }))) {
             Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(accent))
         }
     }

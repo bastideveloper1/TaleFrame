@@ -62,9 +62,9 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
             }
             Row { Switch(draft.locked, { draft = draft.copy(locked = it) }); Text("Bloquear", Modifier.padding(12.dp)) }
             Text("Ancho: ${(draft.width * 100).toInt()} %${if (draft.width == 0f) " (automático)" else ""}")
-            Slider(if (draft.width > 0f) draft.width else .6f, { draft = draft.copy(width = it, height = draft.height.takeIf { h -> h > 0 } ?: .18f) }, valueRange = .05f..1f, enabled = !draft.locked)
+            Slider(if (draft.width > 0f) draft.width else .6f, { draft = if (draft.supportsFreePlacement) resizeFreeElementTo(draft,it,draft.height.takeIf {h->h>0} ?: .18f) else draft.copy(width = it, height = draft.height.takeIf { h -> h > 0 } ?: .18f) }, valueRange = .05f..(if(draft.supportsFreePlacement) maxOf(4f,draft.width) else 1f), enabled = !draft.locked)
             Text("Alto: ${(draft.height * 100).toInt()} %${if (draft.height == 0f) " (automático)" else ""}")
-            Slider(if (draft.height > 0f) draft.height else .18f, { draft = draft.copy(height = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f) }, valueRange = .04f..1f, enabled = !draft.locked)
+            Slider(if (draft.height > 0f) draft.height else .18f, { draft = if (draft.supportsFreePlacement) resizeFreeElementTo(draft,draft.width.takeIf {w->w>0} ?: .6f,it) else draft.copy(height = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f) }, valueRange = .04f..(if(draft.supportsFreePlacement) maxOf(4f,draft.height) else 1f), enabled = !draft.locked)
             if (element.kind == "image") {
                 Text("Rotación: ${draft.rotation.toInt()}°")
                 Slider(draft.rotation, { draft = draft.copy(rotation = it) }, valueRange = -180f..180f, enabled = !draft.locked)
@@ -156,8 +156,9 @@ fun CalcoDialog(slides: List<Slide>, elements: List<Element>, current: Long?, op
 fun QuickTextDialog(initial:String,dismiss:()->Unit,save:(String)->Unit) {
     var text by remember {mutableStateOf(initial)}
     val focus=remember {androidx.compose.ui.focus.FocusRequester()}
-    LaunchedEffect(Unit) {focus.requestFocus()}
+    val keyboard=androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     AlertDialog(onDismissRequest=dismiss,title={Text("Editar texto")},text={
+        LaunchedEffect(Unit) {focus.requestFocus();keyboard?.show()}
         OutlinedTextField(text,{text=it},label={Text("Texto")},modifier=Modifier.fillMaxWidth().then(Modifier.focusRequester(focus)),minLines=2,maxLines=6)
     },confirmButton={TextButton(onClick={save(text)},enabled=text.isNotBlank()){Text("Guardar")}},dismissButton={TextButton(onClick=dismiss){Text("Cancelar")}})
 }

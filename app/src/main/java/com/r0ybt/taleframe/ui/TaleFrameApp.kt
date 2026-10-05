@@ -7,6 +7,7 @@ import androidx.core.content.edit
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import kotlinx.coroutines.delay
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -31,6 +32,7 @@ private data class DeleteRequest(val table: String, val id: Long, val name: Stri
 fun TaleFrameApp(model: StoryViewModel) {
     val story by model.story.collectAsState()
     val ready by model.ready.collectAsState()
+    val undo by model.undoState.collectAsState()
     val error by model.error.collectAsState()
     val backup by model.backup.collectAsState()
     var projectId by rememberSaveable { mutableStateOf<Long?>(null) }
@@ -88,7 +90,8 @@ fun TaleFrameApp(model: StoryViewModel) {
     val project = story.projects.find { it.id == projectId }
     val slides = story.slides.filter { it.projectId == projectId }
     val slide = slides.find { it.id == slideId }
-    val selected = story.elements.find { it.slideId == slideId && it.id == selectedId }
+    val editorSession = slide?.id?.takeUnless {showLibrary || playing}
+    LaunchedEffect(projectId,editorSession) {model.setEditorSession(editorSession)}
     var exportProjectId by rememberSaveable { mutableStateOf<Long?>(null) }
     val backupExporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument(ProjectBackup.MIME)) { uri ->
         exportProjectId?.let { id -> if (uri != null) model.exportProject(id, uri) }
@@ -202,6 +205,7 @@ fun TaleFrameApp(model: StoryViewModel) {
                     modifier = Modifier.weight(1f).padding(12.dp), maxLines = 1,overflow=TextOverflow.Ellipsis)
                 if(projectId==null) TextButton(onClick={backupImporter.launch(arrayOf("*/*"))}) {Text("Importar")}
                 if(projectId==null) TextButton(onClick={showSettings=true}) {Text("Tema")}
+                if (slide != null && !showLibrary) TextButton(onClick={model.undo(slide.id)},enabled=undo.slideId==slide.id && undo.count>0) {Text("Deshacer")}
                 if (project != null && !showLibrary) TextButton(onClick = { librarySection="images";showLibrary = true }) { Text("Biblioteca") }
                 if (slides.isNotEmpty()) TextButton(onClick = { play(slide!=null) }) { Text(if(slide!=null) "▶ Probar desde aquí" else "▶ Play",modifier=Modifier.widthIn(max=90.dp),style=MaterialTheme.typography.labelMedium) }
             }
@@ -253,34 +257,17 @@ fun TaleFrameApp(model: StoryViewModel) {
                     duplicate = { model.edit { duplicateSlide(it.id) } }, reorder = { s, delta -> model.edit { reorderSlide(s.id, delta) } },initialId=project?.let {initialSlide(it,slides)?.id},setInitial={s->model.edit {setInitialSlide(s.projectId,s.id)}},setDraft={s->model.edit {setDraft(s.id,!s.draft)}},state=albumState,moveTo={s,index->model.edit {moveSlideTo(s.id,index)}})
             } else {
                 SlideCanvas(slide, story.elements.filter { it.slideId == slide.id }, Modifier.weight(1f).fillMaxWidth(), editing = true,
-                    onContext={quickMenu=it},grid=grid,positionIndicator=swipeIndicator,onSwipe={delta ->
+                    undoRevision=undo.revision,onContext={quickMenu=it},grid=grid,positionIndicator=swipeIndicator,onSwipe={delta ->
                         val next=slides.getOrNull(slides.indexOf(slide)+delta)
                         if(next!=null) {slideId=next.id;preferences.edit {putLong("last_slide_$projectId",next.id)};swipeIndicator="${slides.indexOf(next)+1} / ${slides.size}"}
-                    }, onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y) } },
-                    onResize = { e -> model.edit { resizeElement(e.id, e.width, e.height, e.x, e.y) } }, selectedId = selectedId,
+                    }, onSelect = { selectedId = it?.id }, onMove = { e -> model.edit { moveElement(e.id, e.x, e.y, e.freePosition) } },
+                    onResize = { e -> model.edit { resizeElement(e.id, e.width, e.height, e.x, e.y, e.freePosition) } }, selectedId = selectedId,
                     showActions = actions, destinations = slides, reference = slides.find { it.id == referenceId },
                     referenceElements = story.elements.filter { it.slideId == referenceId }, referenceOpacity = referenceOpacity,
                     movingBackground = movingBackground, onBackgroundMove = { s -> model.edit {
                         val current = read().slides.find { it.id == s.id }
                         if (current != null && !current.backgroundLocked) saveSlide(current.copy(backgroundX = s.backgroundX, backgroundY = s.backgroundY))
                     } })
-                // Fixed-height controls: selecting on DOWN cannot resize the stage and cancel a gesture.
-                Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState())) {
-                    if (selected == null) Text(if (movingBackground) "Arrastra el fondo manual" else "Toca · arrastra · doble toque: acciones", Modifier.padding(12.dp), style = MaterialTheme.typography.labelSmall)
-                    else {
-                        TextButton(onClick = { elementRequest = selected }) { Text("Editar") }
-                        if (selected.kind == "image" && selected.characterId != null) TextButton(onClick = { changingExpressionId = selected.id; expressionCharacterId = selected.characterId }) { Text("Cambiar expresión") }
-                        if (selected.kind in listOf("text", "button")) {
-                            TextButton(onClick = { savePresetElement = selected; savePresetKind = if (selected.kind == "button") "button" else "dialog" }) { Text("Guardar como preset") }
-                            if (selected.kind == "button") TextButton(onClick = { savePresetElement = selected; savePresetKind = "action" }) { Text("Guardar acción como preset") }
-                        }
-                        TextButton(onClick = { model.edit { toggleLock(selected.id) } }) { Text(if (selected.locked) "Desbloquear" else "Bloquear") }
-                        TextButton(onClick = { model.edit { duplicateElement(selected.id) } }) { Text("Duplicar") }
-                        TextButton(onClick = { model.edit { layer(selected.id, true) } }) { Text("Al frente") }
-                        TextButton(onClick = { model.edit { layer(selected.id, false) } }) { Text("Atrás") }
-                        TextButton(onClick = { deleteRequest = DeleteRequest("elements", selected.id, "elemento") }) { Text("Eliminar") }
-                    }
-                }
                 EditorToolbar(listOf(
                     EditorTool("background","Fondo") {showBackground=true},
                     EditorTool("character","+ Personaje") {showCharacters=true},
@@ -308,7 +295,7 @@ fun TaleFrameApp(model: StoryViewModel) {
     }
     quickMenu?.let {original ->
         val e=story.elements.find {it.id==original.id} ?: original
-        AlertDialog(onDismissRequest={quickMenu=null},title={Text(if(e.kind=="image") e.sourceName.ifBlank {if(e.panel!=null) "Panel" else "Imagen"} else e.text.take(35))},text={Column {
+        AlertDialog(onDismissRequest={quickMenu=null},title={Text(if(e.kind=="image") e.sourceName.ifBlank {if(e.panel!=null) "Panel" else "Imagen"} else e.text.take(35))},text={Column(Modifier.verticalScroll(rememberScrollState())) {
             if(e.kind!="image") TextButton(onClick={quickMenu=null;quickText=e}){Text("Editar texto")}
             if(e.kind=="button") {
                 TextButton(onClick={quickMenu=null;quickDestination=e}){Text("Destino")}
@@ -316,6 +303,12 @@ fun TaleFrameApp(model: StoryViewModel) {
             }
             if(e.kind=="image") TextButton(onClick={quickMenu=null;if(e.characterId!=null) {changingExpressionId=e.id;expressionCharacterId=e.characterId} else importImage("replace",e.media.type.takeIf {it!="slideshow"} ?: "image",e.id)}){Text(if(e.characterId!=null) "Cambiar expresión" else "Cambiar recurso")}
             TextButton(onClick={quickMenu=null;elementRequest=e}){Text("Propiedades")}
+            TextButton(onClick={quickMenu=null;model.edit {layer(e.id,true)}}){Text("Traer al frente")}
+            TextButton(onClick={quickMenu=null;model.edit {layer(e.id,false)}}){Text("Enviar atrás")}
+            if(e.kind in listOf("text","button")) {
+                TextButton(onClick={quickMenu=null;savePresetElement=e;savePresetKind=if(e.kind=="button") "button" else "dialog"}){Text("Guardar como preset")}
+                if(e.kind=="button") TextButton(onClick={quickMenu=null;savePresetElement=e;savePresetKind="action"}){Text("Guardar acción como preset")}
+            }
             TextButton(onClick={quickMenu=null;model.edit {duplicateElement(e.id)}}){Text("Duplicar")}
             TextButton(onClick={quickMenu=null;model.edit {toggleLock(e.id)}}){Text(if(e.locked) "Desbloquear" else "Bloquear")}
         }},confirmButton={TextButton(onClick={quickMenu=null;deleteRequest=DeleteRequest("elements",e.id,"elemento")}){Text("Eliminar")}},dismissButton={TextButton(onClick={quickMenu=null}){Text("Cerrar")}})

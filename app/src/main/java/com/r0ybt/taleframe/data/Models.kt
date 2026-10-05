@@ -14,7 +14,8 @@ data class Slide(
     val backgroundResourceId: Long? = null, val audioResourceId: Long? = null, val draft: Boolean = false
 )
 
-// x/y remain normalized over available travel, preserving MVP compositions.
+// Legacy x/y are normalized over available travel, preserving existing compositions.
+// freePosition uses stage-relative origins so images can cross 100% size without a singularity.
 // A zero width/height retains legacy automatic text sizing until explicitly resized.
 data class Element(
     val id: Long, val slideId: Long, val kind: String, val text: String,
@@ -26,7 +27,7 @@ data class Element(
     val media: MediaOptions = MediaOptions(), val transition: Transition = Transition(),
     val style: VisualStyle = VisualStyle(), val speakerName: String = "", val sourceName: String = "",
     val resourceId: Long? = null, val characterId: Long? = null, val expressionId: Long? = null, val presetId: Long? = null,
-    val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null, val baseNavigation: String? = null
+    val freePosition: Boolean = false, val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null, val baseNavigation: String? = null
 )
 data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList(),
     val resources: List<Resource> = emptyList(), val characters: List<Character> = emptyList(),
@@ -34,3 +35,12 @@ data class Story(val projects: List<Project> = emptyList(), val slides: List<Sli
 fun boundedPosition(value: Float): Float = boundedValue(value, 0f, 1f, 0f)
 fun boundedValue(value: Float, min: Float, max: Float, fallback: Float): Float =
     if (value.isFinite()) value.coerceIn(min, max) else fallback
+
+/** Free framing applies only to standalone images/GIF, preserving panels and characters. */
+val Element.supportsFreePlacement: Boolean
+    get() = kind == "image" && panel == null && characterId == null && media.type in listOf("image", "gif")
+fun finitePosition(value: Float): Float = if (value.isFinite()) value else 0f
+fun Element.storedPosition(value: Float): Float = if (supportsFreePlacement) finitePosition(value) else boundedPosition(value)
+fun Element.storedSize(value: Float, minimum: Float = 0f, fallback: Float = 0f): Float =
+    if (supportsFreePlacement) { if (value.isFinite()) value.coerceAtLeast(minimum) else fallback }
+    else boundedValue(value, minimum, 1f, fallback)
