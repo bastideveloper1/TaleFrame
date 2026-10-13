@@ -141,15 +141,19 @@ fun CharacterPicker(story: Story, projectId: Long, dismiss: () -> Unit, choose: 
 fun ExpressionPicker(character: Character, expressions: List<Expression>, resources: List<Resource>, dismiss: () -> Unit, choose: (List<Long>) -> Unit, allowSequence: Boolean = true) {
     var sequence by remember {mutableStateOf(false)}
     var ordered by remember {mutableStateOf<List<Long>>(emptyList())}
-    AlertDialog(onDismissRequest=dismiss,title={Text("Expresiones de ${character.name}")},text={Column {
+    AlertDialog(onDismissRequest=dismiss,title={Text("Expresiones de ${character.name}")},text={Column(Modifier.verticalScroll(rememberScrollState())) {
         if(expressions.isEmpty()) Text("Añade expresiones en Biblioteca → Personajes → ${character.name}.")
         if(allowSequence && expressions.size>1) Row {Switch(sequence,{sequence=it;ordered=emptyList()});Text("Crear secuencia",Modifier.padding(12.dp))}
-        if(sequence) Text("Toca las imágenes en el orden deseado. La duración se ajusta en Editar.")
+        if(sequence) Text("Toca las imágenes en el orden deseado. Puedes repetir una expresión; las duraciones se ajustan en Editar.")
         LazyVerticalGrid(GridCells.Fixed(2),Modifier.height(300.dp),verticalArrangement=Arrangement.spacedBy(8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-            items(expressions,key={it.id}) { e-> Card(onClick={if(!sequence) choose(listOf(e.id)) else ordered=if(e.id in ordered) ordered-e.id else ordered+e.id},modifier=Modifier.testTag("expression-${e.id}")) {
+            items(expressions,key={it.id}) { e-> Card(onClick={if(!sequence) choose(listOf(e.id)) else ordered=ordered+e.id},modifier=Modifier.testTag("expression-${e.id}")) {
                 ResourcePreview(resources.find {it.id==e.resourceId},Modifier.fillMaxWidth().height(100.dp))
                 Text("${if(e.id in ordered) "${ordered.indexOf(e.id)+1}. " else ""}${e.name}",Modifier.padding(8.dp))
             }}
+        }
+        if(sequence) {
+            Text(ordered.mapIndexed { i, id -> "${i + 1}. ${expressions.find { it.id == id }?.name ?: "Expresión"}" }.joinToString(" → "))
+            TextButton(onClick={ordered=ordered.dropLast(1)},enabled=ordered.isNotEmpty()){Text("Quitar último paso")}
         }
     }},confirmButton={if(sequence) TextButton(onClick={choose(ordered)},enabled=ordered.isNotEmpty()){Text("Insertar secuencia")} else TextButton(onClick=dismiss){Text("Cancelar")}},dismissButton={if(sequence) TextButton(onClick=dismiss){Text("Cancelar")}})
 }

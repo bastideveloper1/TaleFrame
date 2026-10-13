@@ -100,7 +100,7 @@ class LibraryStore(private val repository: StoryRepository) {
         when(usage) {
             "audio" -> { require(r.type=="audio");repository.saveSlide(slide.copy(audio=r.path,audioResourceId=r.id,audioRevision=slide.audioRevision+1));return null }
             "background" -> { require(r.type!="audio");repository.saveSlide(slide.copy(image=r.path,backgroundResourceId=r.id,media=MediaOptions(type=r.type,revision=slide.media.revision+1)));return null }
-            else -> { require(r.type!="audio");return repository.saveElement(Element(0,slideId,"image","",image=r.path,width=.4f,height=.4f,resourceId=r.id,media=MediaOptions(type=r.type,revision=r.revision))) }
+            else -> { require(r.type!="audio");val size=initialGifSize(r.path,r.type);return repository.saveElement(Element(0,slideId,"image","",image=r.path,width=size.first,height=size.second,resourceId=r.id,media=MediaOptions(type=r.type,revision=r.revision))) }
         }
     }
     fun insertCharacter(slideId: Long, expressionIds: List<Long>): Long {
@@ -119,7 +119,7 @@ class LibraryStore(private val repository: StoryRepository) {
         require(element.kind=="image" && element.characterId==e.characterId) { "Escoge una expresión del mismo personaje" }
         val c=story.characters.first { it.id==e.characterId };val r=story.resources.first { it.id==e.resourceId }
         repository.saveElement(element.copy(image=r.path,resourceId=r.id,expressionId=e.id,expressionFrames=listOf(e.id),sourceName="${c.name} / ${e.name}",
-            media=element.media.copy(type="image",frames=emptyList(),revision=element.media.revision+1)))
+            media=element.media.copy(type="image",frames=emptyList(),frameSeconds=emptyList(),revision=element.media.revision+1)))
     }
     fun insertDialog(slideId: Long, characterId: Long? = null, presetId: Long? = null): Long {
         val story=repository.read();val slide=story.slides.first { it.id==slideId }

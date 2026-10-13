@@ -62,7 +62,7 @@ fun styledElement(slideId: Long, preset: Preset?, speaker: String = "", characte
     return Element(0, slideId, if (button) "button" else "text", "",
         y=if (button) .7f else .65f, width=if (button) .28f else .75f, height=if (button) .12f else .22f,
         textColor=preset?.textColor ?: -16777216, backgroundColor=preset?.backgroundColor ?: -1,
-        style=preset?.style ?: VisualStyle(shape="rounded"), transition=preset?.transition ?: Transition(),
+        style=preset?.style ?: VisualStyle(shape="rounded"), useDefaultTransition=preset==null, transition=preset?.transition ?: Transition(),
         speakerName=speaker, characterId=characterId, presetId=preset?.id)
 }
 

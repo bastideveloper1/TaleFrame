@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -37,8 +38,9 @@ fun ColorPicker(label: String, selected: Int, pick: (Int) -> Unit) {
 }
 
 @Composable
-fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList(), assignLibrary:()->Unit = {}) {
+fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>, dismiss: () -> Unit, save: (Element) -> Unit, replace: () -> Unit = {}, addFrames: () -> Unit = {}, presets: List<Preset> = emptyList(), projectPlayback: ProjectPlayback = ProjectPlayback(), expressions: List<Expression> = emptyList(), assignLibrary:()->Unit = {}) {
     var draft by remember(element.id) { mutableStateOf(element) }
+    val mediaAspect = if (element.supportsCornerResize) localMediaAspect(draft.image, draft.media.type) else null
     var showStyle by remember(element.id) { mutableStateOf(false) }
     var destinationOpen by remember(element.id) {mutableStateOf(false)}
     var presetPicker by remember(element.id) { mutableStateOf<String?>(null) }
@@ -53,7 +55,10 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                 TextButton(onClick = {if(draft.panel!=null) save(draft);replace()}) { Text(if(draft.panel!=null) "Asignar imagen al panel" else "Reemplazar recurso") }
                 if(draft.panel!=null) {TextButton(onClick={save(draft);assignLibrary()}){Text("Elegir imagen de Biblioteca")};TextButton(onClick={draft=draft.copy(image=null,resourceId=null,media=MediaOptions())}) {Text("Vaciar panel")}}
                 if(draft.panel!=null) PanelControls(requireNotNull(draft.panel)) {draft=draft.copy(panel=it)}
-                MediaControls(draft.media) { draft = draft.copy(media = it) }
+                MediaControls(draft.media,
+                    frameNames = draft.expressionFrames.map { id -> expressions.find { it.id == id }?.name ?: "Expresión" },
+                    moveFrame = { from, to -> draft = reorderExpressionFrames(draft, from, to) },
+                    removeFrame = { index -> draft = removeExpressionFrame(draft, index) }) { draft = draft.copy(media = it) }
                 if (draft.panel==null && (draft.media.type == "image" || draft.media.type == "slideshow")) TextButton(onClick = { save(draft); addFrames() }) { Text("Añadir imágenes a la secuencia") }
             }
             if (element.kind == "text") {
@@ -61,10 +66,18 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                 ColorPicker("Color del cuadro", draft.backgroundColor) { draft = draft.copy(backgroundColor = it) }
             }
             Row { Switch(draft.locked, { draft = draft.copy(locked = it) }); Text("Bloquear", Modifier.padding(12.dp)) }
+            if (draft.supportsCornerResize) {
+                Row { Switch(draft.permitsOverflow, { draft = setElementOverflow(draft, it) }, enabled = !draft.locked)
+                    Text("Permitir desbordamiento", Modifier.padding(12.dp)) }
+                TextButton(onClick = {
+                    val size = mediaElementSize(mediaAspect)
+                    draft = draft.copy(x = .5f, y = .5f, width = size.first, height = size.second, freePosition = false)
+                }, enabled = !draft.locked) { Text("Restablecer tamaño y posición") }
+            }
             Text("Ancho: ${(draft.width * 100).toInt()} %${if (draft.width == 0f) " (automático)" else ""}")
-            Slider(if (draft.width > 0f) draft.width else .6f, { draft = if (draft.supportsFreePlacement) resizeFreeElementTo(draft,it,draft.height.takeIf {h->h>0} ?: .18f) else draft.copy(width = it, height = draft.height.takeIf { h -> h > 0 } ?: .18f) }, valueRange = .05f..(if(draft.supportsFreePlacement) maxOf(4f,draft.width) else 1f), enabled = !draft.locked)
+            Slider(if (draft.width > 0f) draft.width else .6f, { draft = if (draft.supportsCornerResize) resizeMediaElementTo(draft, width = it, aspect = mediaAspect) else draft.copy(width = it, height = draft.height.takeIf { h -> h > 0 } ?: .18f) }, valueRange = .05f..(if(draft.supportsFreePlacement) maxOf(4f,draft.width) else 1f), enabled = !draft.locked)
             Text("Alto: ${(draft.height * 100).toInt()} %${if (draft.height == 0f) " (automático)" else ""}")
-            Slider(if (draft.height > 0f) draft.height else .18f, { draft = if (draft.supportsFreePlacement) resizeFreeElementTo(draft,draft.width.takeIf {w->w>0} ?: .6f,it) else draft.copy(height = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f) }, valueRange = .04f..(if(draft.supportsFreePlacement) maxOf(4f,draft.height) else 1f), enabled = !draft.locked)
+            Slider(if (draft.height > 0f) draft.height else .18f, { draft = if (draft.supportsCornerResize) resizeMediaElementTo(draft, height = it, aspect = mediaAspect) else draft.copy(height = it, width = draft.width.takeIf { w -> w > 0 } ?: .6f) }, valueRange = .04f..(if(draft.supportsFreePlacement) maxOf(4f,draft.height) else 1f), enabled = !draft.locked)
             if (element.kind == "image") {
                 Text("Rotación: ${draft.rotation.toInt()}°")
                 Slider(draft.rotation, { draft = draft.copy(rotation = it) }, valueRange = -180f..180f, enabled = !draft.locked)
@@ -76,7 +89,9 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                 Text("Lámina de destino")
                 TextButton(onClick={destinationOpen=true}){Text("Elegir destino: ${slides.find {it.id==draft.targetId}?.name ?: "Sin destino"}")}
                 if(destinationOpen) DestinationDialog(slides,elements,draft.targetId,element.slideId,{destinationOpen=false}) {id->draft=draft.copy(targetId=id);destinationOpen=false}
-                TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
+                Row { Switch(draft.useDefaultTransition, { draft = draft.copy(useDefaultTransition = it) }); Text("Usar transición predeterminada", Modifier.padding(12.dp)) }
+                if (!draft.useDefaultTransition) TransitionControls(draft.transition) { draft = draft.copy(transition = it) }
+                else TransitionPreview(effectiveTransition(projectPlayback, slides.find { it.id == draft.slideId } ?: Slide(0, 0, "")))
             }
             if (element.kind != "image") {
                 Text("Editar modifica solo esta instancia.", style = MaterialTheme.typography.bodySmall)
@@ -84,7 +99,7 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
                 if (showStyle) {
                     if (element.kind == "button") {
                         presets.filter { it.kind == "button" }.forEach { p -> TextButton(onClick = { draft = draft.copy(textColor = p.textColor, backgroundColor = p.backgroundColor, style = p.style, presetId = p.id) }) { Text("Usar estilo: ${p.name}") } }
-                        presets.filter { it.kind == "action" }.forEach { p -> TextButton(onClick = { draft = draft.copy(transition = p.transition) }) { Text("Usar acción: ${p.name}") } }
+                        presets.filter { it.kind == "action" }.forEach { p -> TextButton(onClick = { draft = draft.copy(transition = p.transition, useDefaultTransition = false) }) { Text("Usar acción: ${p.name}") } }
                         ColorPicker("Color del texto", draft.textColor) { draft = draft.copy(textColor = it) }
                         ColorPicker("Color del cuadro", draft.backgroundColor) { draft = draft.copy(backgroundColor = it) }
                     }
@@ -97,7 +112,7 @@ fun ElementDialog(element: Element, slides: List<Slide>, elements: List<Element>
     }, confirmButton = { TextButton(onClick = { save(draft.copy(text = draft.text.trim())) }, enabled = draft.kind == "image" || draft.text.isNotBlank()) { Text("Guardar") } },
         dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
     presetPicker?.let { kind -> PresetPicker(presets.filter { it.kind == kind }, if (kind == "button") "Estilo del botón" else "Acción del botón", { presetPicker = null }, { p ->
-        draft = if (kind == "button") draft.copy(textColor = p.textColor, backgroundColor = p.backgroundColor, style = p.style, presetId = p.id) else draft.copy(transition = p.transition)
+        draft = if (kind == "button") draft.copy(textColor = p.textColor, backgroundColor = p.backgroundColor, style = p.style, presetId = p.id) else draft.copy(transition = p.transition, useDefaultTransition = false)
         presetPicker = null
     }) }
 }
@@ -138,18 +153,34 @@ fun BackgroundDialog(slide: Slide, dismiss: () -> Unit, save: (Slide) -> Unit, i
 }
 
 @Composable
-fun CalcoDialog(slides: List<Slide>, elements: List<Element>, current: Long?, opacity: Float, dismiss: () -> Unit, save: (Long?, Float) -> Unit) {
-    var target by remember { mutableStateOf(current) }
-    var alpha by remember { mutableFloatStateOf(opacity) }
+fun CalcoDialog(slides: List<Slide>, elements: List<Element>, config: CalcoConfig, previous: Slide?,
+    dismiss: () -> Unit, save: (CalcoConfig) -> Unit) {
+    var mode by remember { mutableStateOf(if (config.configured) config.mode else CalcoMode.PREVIOUS) }
+    var target by remember { mutableStateOf(config.manualId) }
+    var alpha by remember { mutableFloatStateOf(config.opacity) }
+    val maxHeight = (LocalConfiguration.current.screenHeightDp * .6f).dp
     AlertDialog(onDismissRequest = dismiss, title = { Text("Calco") }, text = {
-        Column {
+        Column(Modifier.heightIn(max = maxHeight).verticalScroll(rememberScrollState())) {
             Text("Referencia detrás de la lámina actual. No se edita ni aparece en Play.")
-            DestinationPicker(slides, elements, target, { target = it }, allowNone = false)
+            listOf(CalcoMode.PREVIOUS to "Lámina anterior (automático)",
+                CalcoMode.MANUAL to "Selección manual de lámina", CalcoMode.NONE to "Sin calco").forEach { (value, label) ->
+                Row(Modifier.fillMaxWidth().clickable { mode = value }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    RadioButton(mode == value, onClick = { mode = value })
+                    Text(label, Modifier.weight(1f))
+                }
+            }
+            when (mode) {
+                CalcoMode.PREVIOUS -> Text(previous?.let { "Referencia: ${it.name}" }
+                    ?: "Esta es la primera lámina del álbum. No hay una lámina anterior.")
+                CalcoMode.MANUAL -> DestinationPicker(slides, elements, target, { target = it }, allowNone = false)
+                CalcoMode.NONE -> Unit
+            }
             Text("Opacidad del calco: ${(alpha * 100).toInt()} %")
             Slider(alpha, { alpha = it }, valueRange = 0f.. .9f)
-            TextButton(onClick = { target = null }) { Text("Desactivar calco") }
         }
-    }, confirmButton = { TextButton(onClick = { save(target, alpha) }) { Text("Guardar") } }, dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
+    }, confirmButton = { TextButton(onClick = { save(CalcoConfig(mode, target, alpha, configured = true)) },
+        enabled = mode != CalcoMode.MANUAL || slides.any { it.id == target }) { Text("Guardar") } },
+        dismissButton = { TextButton(onClick = dismiss) { Text("Cancelar") } })
 }
 
 @Composable

@@ -16,34 +16,36 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
 
-/** Portable logical format v1. These fields are a format contract, independent of SQLite migrations. */
+/** Portable logical format v6 supports arbitrary script intervals (imports v1–v5). These fields are a format contract, independent of SQLite migrations. */
 class ProjectBackup(private val context: Context, private val repo: StoryRepository) {
     companion object {
-        const val FORMAT_VERSION = 1
+        const val FORMAT_VERSION = 6
         const val MIME = "application/vnd.taleframe.project"
         private const val MAX_TOTAL = 2L * 1024 * 1024 * 1024
         private const val MAX_MEMBER = 500L * 1024 * 1024
         private const val MAX_JSON = 16L * 1024 * 1024
         private val hashName = Regex("resources/[a-f0-9]{64}")
         private val columns = linkedMapOf(
-            "projects" to "id,name,cover_resource_id,initial_slide_id,skip_drafts,automatic_base_navigation",
+            "projects" to "id,name,cover_resource_id,initial_slide_id,skip_drafts,automatic_base_navigation,cover_scale,cover_x,cover_y,settings,quick_script_input",
             "resources" to "id,project_id,name,type,category,path,revision",
             "presets" to "id,project_id,name,kind,text_color,background_color,settings",
             "characters" to "id,project_id,name,description,portrait_id,dialog_preset_id",
             "expressions" to "id,character_id,name,resource_id,sort_order",
-            "slides" to "id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id,background_resource_id,audio_resource_id,draft",
+            "slides" to "id,project_id,name,color,image,sort_order,background_mode,background_scale,background_x,background_y,background_locked,settings,auto_target_id,background_resource_id,audio_resource_id,draft,narrative_script",
             "elements" to "id,slide_id,kind,text,x,y,text_color,background_color,target_id,image,width,height,rotation,flipped,opacity,locked,layer_order,settings,resource_id,character_id,expression_id,preset_id,base_navigation",
-            "templates" to "id,project_id,name,body"
+            "templates" to "id,project_id,name,body",
+            "quick_script_drafts" to "id,project_id,original_text",
+            "quick_script_assignments" to "id,project_id,draft_id,slide_id,start_offset,end_offset,dirty"
         ).mapValues { it.value.split(',') }
         private val references = mapOf(
-            "project_id" to "projects", "slide_id" to "slides", "target_id" to "slides", "auto_target_id" to "slides", "initial_slide_id" to "slides",
+            "project_id" to "projects", "draft_id" to "quick_script_drafts", "slide_id" to "slides", "target_id" to "slides", "auto_target_id" to "slides", "initial_slide_id" to "slides",
             "cover_resource_id" to "resources", "background_resource_id" to "resources", "audio_resource_id" to "resources", "resource_id" to "resources", "portrait_id" to "resources",
             "character_id" to "characters", "expression_id" to "expressions", "preset_id" to "presets", "dialog_preset_id" to "presets",
             "resource" to "resources", "audioResource" to "resources", "character" to "characters", "expression" to "expressions", "preset" to "presets"
         )
-        private val integers = setOf("id", "revision", "sort_order", "layer_order", "color", "text_color", "background_color", "skip_drafts", "automatic_base_navigation", "background_locked", "draft", "flipped", "locked") + references.keys
-        private val reals = setOf("x", "y", "width", "height", "rotation", "opacity", "background_scale", "background_x", "background_y")
-        private val nullable = setOf("image", "base_navigation") + references.keys.filter { it !in setOf("project_id", "slide_id", "character_id", "resource_id") }
+        private val integers = setOf("id", "revision", "start_offset", "end_offset", "dirty", "sort_order", "layer_order", "color", "text_color", "background_color", "skip_drafts", "automatic_base_navigation", "background_locked", "draft", "flipped", "locked") + references.keys
+        private val reals = setOf("x", "y", "width", "height", "rotation", "opacity", "background_scale", "background_x", "background_y", "cover_scale", "cover_x", "cover_y")
+        private val nullable = setOf("image", "base_navigation", "narrative_script") + references.keys.filter { it !in setOf("project_id", "draft_id", "slide_id", "character_id", "resource_id") }
         fun suggestedFilename(name: String) = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim().take(120).ifBlank { "Proyecto" } + ".taleframe"
         fun copyName(name: String, existing: List<String>): String {
             var number = 2
@@ -75,11 +77,13 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
                 else -> "project_id=?"
             }
             val rows = JSONArray()
-            db.query(table, fields.toTypedArray(), condition, arrayOf(projectId.toString()), null, null, "id").use { c ->
+            val queryFields = fields.map { if (it in setOf("original_text", "quick_script_input", "narrative_script")) "substr($it,1,65536) AS $it" else it }
+            db.query(table, queryFields.toTypedArray(), condition, arrayOf(projectId.toString()), null, null, "id").use { c ->
                 while (c.moveToNext()) {
                     val row = JSONObject()
                     fields.forEachIndexed { i, field -> row.put(field, when {
                         c.isNull(i) -> JSONObject.NULL
+                        field in setOf("original_text", "quick_script_input", "narrative_script") -> sqliteText(db, table, field, c.getLong(0), c.getString(i))
                         field in setOf("settings", "body") -> expand(JSONObject(c.getString(i)))
                         c.getType(i) == Cursor.FIELD_TYPE_INTEGER -> c.getLong(i)
                         c.getType(i) == Cursor.FIELD_TYPE_FLOAT -> c.getDouble(i)
@@ -160,7 +164,7 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
                 val version = manifest.get("formatVersion")
                 require(version is Int || version is Long)
                 if ((version as Number).toLong() > FORMAT_VERSION) throw InvalidPackage("Este proyecto fue creado con una versión más reciente de TaleFrame.")
-                require(version.toLong() == FORMAT_VERSION.toLong())
+                require(version.toLong() in 1L..FORMAT_VERSION.toLong())
                 require(manifest.get("appVersion") is String && manifest.get("exportedAt") is String && manifest.get("projectName") is String)
                 val (data, raw) = json("project.json")
                 require(manifest.getString("projectSha256") == digest(raw))
@@ -182,6 +186,23 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
                     progress("Verificando recursos… ${i + 1}/${declarations.length()}")
                 }
                 require(names.toSet() == blobs.keys + setOf("manifest.json", "project.json"))
+                if (version.toLong() == 1L) eachRow(data, "projects") { row ->
+                    require(!row.has("cover_scale") && !row.has("cover_x") && !row.has("cover_y"))
+                    row.put("cover_scale", 1.0).put("cover_x", 0.0).put("cover_y", 0.0)
+                }
+                if (version.toLong() < 3L) eachRow(data, "projects") { row ->
+                    require(!row.has("settings")); row.put("settings", JSONObject())
+                }
+                if (version.toLong() < 4L) eachRow(data, "slides") { row ->
+                    require(!row.has("narrative_script")); row.put("narrative_script", JSONObject.NULL)
+                }
+                if (version.toLong() < 5L) {
+                    eachRow(data, "projects") { row ->
+                        require(!row.has("quick_script_input")); row.put("quick_script_input", "")
+                    }
+                    require(!data.has("quick_script_drafts") && !data.has("quick_script_assignments"))
+                    data.put("quick_script_drafts", JSONArray()).put("quick_script_assignments", JSONArray())
+                }
                 validate(data, blobs)
                 require(data.getJSONArray("projects").getJSONObject(0).getString("name") == manifest.getString("projectName"))
                 return Prepared(directory, data, blobs)
@@ -252,7 +273,7 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
                         val target = references[field]
                         val value = when {
                             field == "name" && table == "projects" -> name
-                            target != null && field in setOf("project_id", "slide_id", "character_id", "resource_id") && table in setOf("resources", "presets", "characters", "expressions", "slides", "elements", "templates") && (field in setOf("project_id", "slide_id") || table == "expressions") -> maps.getValue(target).getValue(row.getLong(field))
+                            target != null && (field == "project_id" || field == "draft_id" || field == "slide_id" && table == "elements" || table == "expressions" && field in setOf("character_id", "resource_id")) -> maps.getValue(target).getValue(row.getLong(field))
                             target != null -> JSONObject.NULL
                             field in setOf("settings", "body") -> collapse(row.getJSONObject(field)).toString()
                             else -> row.get(field)
@@ -289,13 +310,20 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
             require(row.keys().asSequence().toSet() == fields.toSet())
             fields.forEach { field ->
                 val value = row.get(field)
-                val isNullable = field in nullable || table == "elements" && field in setOf("character_id", "resource_id")
+                val isNullable = field in nullable || table == "elements" && field in setOf("character_id", "resource_id") || table == "quick_script_assignments" && field == "slide_id"
                 if (value == JSONObject.NULL) require(isNullable) else when {
                     field in setOf("settings", "body") -> require(value is JSONObject)
                     field in integers -> require((value is Int || value is Long) && (field !in references || (value as Number).toLong() in ids.getValue(references.getValue(field))))
                     field in reals -> require(value is Number && value.toDouble().isFinite() && kotlin.math.abs(value.toDouble()) <= 1000000)
-                    else -> require(value is String && value.length <= 1000000)
+                    else -> require(value is String && value.length <= if (field in setOf("original_text", "quick_script_input", "narrative_script")) MAX_JSON else 1000000)
                 }
+            }
+            if (table == "projects") {
+                val settings = row.getJSONObject("settings")
+                if (settings.has("loop")) require(settings.get("loop") is Boolean)
+                if (settings.has("seconds")) require(settings.get("seconds") is Number && settings.getDouble("seconds").isFinite() && settings.getDouble("seconds") in .2..3600.0)
+                require(row.getDouble("cover_scale") in .5..4.0)
+                require(row.getDouble("cover_x") in -1.0..1.0 && row.getDouble("cover_y") in -1.0..1.0)
             }
             require(row.getLong("id") > 0)
             fields.filter { it in setOf("skip_drafts", "automatic_base_navigation", "background_locked", "draft", "flipped", "locked") }.forEach { require(row.getLong(it) in 0L..1L) }
@@ -310,14 +338,19 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
                     val m = obj.getJSONObject(key)
                     if (m.has("type")) require(m.get("type") in setOf("image", "gif", "video", "slideshow"))
                     listOf("loop", "autoplay", "muted").forEach { if (m.has(it)) require(m.get(it) is Boolean) }
+                    if (m.has("frameSeconds")) {
+                        val times = m.getJSONArray("frameSeconds")
+                        require(times.length() == 0 || times.length() == (m.optJSONArray("frames")?.length() ?: 0))
+                        arrayValues(times).forEach { require(it is Number && it.toDouble().isFinite() && it.toDouble() in .2..3600.0) }
+                    }
                     listOf("volume", "seconds", "revision").forEach { if (m.has(it)) require(m.get(it) is Number && m.getDouble(it).isFinite()) }
                 }
                 if (key == "transition") {
                     val t = obj.getJSONObject(key)
-                    if (t.has("type")) require(t.get("type") in setOf("none", "fade", "left", "right"))
+                    if (t.has("type")) require(t.get("type") in transitionTypes)
                     if (t.has("ms")) require(t.get("ms") is Int || t.get("ms") is Long)
                 }
-                if (key in setOf("autoEnabled", "audioLoop")) require(obj.get(key) is Boolean)
+                if (key in setOf("autoEnabled", "audioLoop", "allowOverflow", "useDefaultTransition", "useDefaultSequenceTime", "sequenceEnabled")) require(obj.get(key) is Boolean)
                 if (key == "expressionFrames") arrayValues(obj.getJSONArray(key)).forEach { require(it is Int || it is Long); require((it as Number).toLong() in ids.getValue("expressions")) }
                 if (key == "image" && !obj.isNull(key)) media(obj.getString(key), obj.optJSONObject("settings")?.optJSONObject("media")?.optString("type", "image")?.let { if (it == "slideshow") "image" else it } ?: "image")
                 if (key == "audio" && !obj.isNull(key)) media(obj.getString(key), "audio")
@@ -350,6 +383,29 @@ class ProjectBackup(private val context: Context, private val repo: StoryReposit
             if (!row.isNull("expression_id")) require(expressions.getValue(row.getLong("expression_id")).getLong("character_id") == row.getLong("character_id"))
             arrayValues(row.getJSONObject("settings").optJSONArray("expressionFrames") ?: JSONArray()).forEach { require(expressions.getValue((it as Number).toLong()).getLong("character_id") == row.getLong("character_id")) }
         }
+        val draftRows = rows(data, "quick_script_drafts").associateBy { it.getLong("id") }
+        val slideRows = rows(data, "slides").associateBy { it.getLong("id") }
+        rows(data, "quick_script_assignments").groupBy { it.getLong("draft_id") }.forEach { (draftId, assignments) ->
+            val draft = draftRows.getValue(draftId)
+            val original = draft.getString("original_text")
+            var previousEnd = 0L
+            assignments.sortedBy { it.getLong("start_offset") }.forEach { assignment ->
+                val start = assignment.getLong("start_offset")
+                val end = assignment.getLong("end_offset")
+                require(start in 0..Int.MAX_VALUE.toLong() && end in 0..Int.MAX_VALUE.toLong())
+                require(validScriptRange(original, start.toInt(), end.toInt()) && start >= previousEnd)
+                require(assignment.getLong("project_id") == draft.getLong("project_id"))
+                require(assignment.getLong("dirty") in 0L..1L)
+                if (!assignment.isNull("slide_id")) {
+                    val slide = slideRows.getValue(assignment.getLong("slide_id"))
+                    require(slide.getLong("project_id") == assignment.getLong("project_id"))
+                    if (assignment.getLong("dirty") == 0L) require(slide.get("narrative_script") == original.substring(start.toInt(), end.toInt()))
+                }
+                previousEnd = end
+            }
+        }
+        val assignedSlides = rows(data, "quick_script_assignments").filter { !it.isNull("slide_id") }.map { it.getLong("slide_id") }
+        require(assignedSlides.distinct().size == assignedSlides.size)
         require(rows(data, "presets").count { it.getString("kind") == "narrator" } <= 1)
         require(mediaTypes.keys == blobs.keys)
         mediaTypes.forEach { (token, types) -> types.forEach { validateMedia(blobs.getValue(token), it) } }

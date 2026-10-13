@@ -50,10 +50,10 @@ internal fun foreground(): Boolean {
 fun LocalMedia(path: String?, options: MediaOptions, modifier: Modifier = Modifier, preview: Boolean = false, fill: Boolean = false, editing: Boolean = false) {
     val active = foreground() && !preview
     var tick by remember(path, options) { mutableLongStateOf(0) }
-    LaunchedEffect(path, options, active) {
-        tick = 0
-        if (active && options.type == "slideshow") {
-            while (options.loop || tick < options.frames.lastIndex) { delay((options.seconds.coerceIn(.2f, 3600f) * 1000).toLong()); tick++ }
+    var sequencePaused by remember(path, options) { mutableStateOf(!options.autoplay) }
+    LaunchedEffect(path, options, active, sequencePaused) {
+        if (active && options.type == "slideshow" && !sequencePaused && options.frames.isNotEmpty()) {
+            runMediaSequence(options, tick) { tick = it }
         }
     }
     val displayed = if (options.type == "slideshow" && options.frames.isNotEmpty()) options.frames[frameIndex(tick, options.frames.size, options.loop)] else path
@@ -75,6 +75,14 @@ fun LocalMedia(path: String?, options: MediaOptions, modifier: Modifier = Modifi
                 val bitmap = localImage(displayed, if (preview) 384 else 1536)
                 bitmap?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = if (fill) ContentScale.Crop else ContentScale.Fit) }
                 if (displayed != null && bitmap == null) Text("Cargando / recurso no disponible", color = Color.White, modifier = Modifier.background(Color(0x99000000)))
+            }
+        }
+        if (options.type == "slideshow" && !preview && !editing && options.frames.size > 1) {
+            TextButton(onClick = {
+                if (!options.loop && tick >= options.frames.lastIndex) { tick = 0; sequencePaused = false }
+                else sequencePaused = !sequencePaused
+            }, modifier = Modifier.align(Alignment.BottomEnd).background(Color(0xAA000000))) {
+                Text(if (!options.loop && tick >= options.frames.lastIndex) "▶ Reiniciar secuencia" else if (sequencePaused) "▶ Secuencia" else "Detener secuencia", color = Color.White)
             }
         }
     }

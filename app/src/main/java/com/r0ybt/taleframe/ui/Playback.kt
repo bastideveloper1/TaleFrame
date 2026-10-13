@@ -2,6 +2,9 @@ package com.r0ybt.taleframe.ui
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
@@ -46,7 +49,11 @@ internal suspend fun prepareSlideVisuals(slide:Slide,elements:List<Element>):Map
 }
 
 @Composable
-fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier, blockedTargets:Set<Long> = emptySet(), leave:()->Unit = {}, slides:List<Slide> = listOfNotNull(slide), navigate: (Long) -> Unit) {
+fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier, blockedTargets:Set<Long> = emptySet(), leave:()->Unit = {}, slides:List<Slide> = listOfNotNull(slide), projectPlayback: ProjectPlayback = ProjectPlayback(), navigate: (Long) -> Unit) {
+    var sequenceRunning by remember { mutableStateOf(projectPlayback.sequenceEnabled) }
+    var timersStopped by remember { mutableStateOf(false) }
+    val currentSlides by rememberUpdatedState(slides)
+    val currentSettings by rememberUpdatedState(projectPlayback)
     var blockedNotice by remember(slide?.id) {mutableStateOf(false)}
     val currentBlocked by rememberUpdatedState(blockedTargets)
     val gate = remember { ExitGate() }
@@ -60,27 +67,39 @@ fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier
     val request: (Long, Transition) -> Unit = { target, effect ->
         val current = currentSlide
         if(target in currentBlocked && active && exit==null && gate.available(gate.token)) blockedNotice=true
-        else if (current != null && exit == null && active && gate.take(gate.token)) exit = Exit(current, target, effect)
+        else if (current != null && exit == null && active && gate.take(gate.token)) exit = Exit(current, target, if (effect.type == "default") effectiveTransition(currentSettings, current) else effect)
     }
-    LaunchedEffect(slide?.id, entry, active) {
+    LaunchedEffect(slide?.id, entry, active, sequenceRunning, timersStopped, projectPlayback, slides) {
         val token = gate.enter()
         val current = slide
-        if (active && exit == null && current?.autoEnabled == true && current.autoTargetId != null) {
-            delay((current.autoSeconds.coerceIn(.2f, 3600f) * 1000).toLong())
-            if(current.autoTargetId in currentBlocked) {if(gate.available(token) && exit==null) blockedNotice=true}
-            else if (gate.take(token)) exit = Exit(current, current.autoTargetId, current.transition)
+        if (active && exit == null && !timersStopped && current != null) {
+            val target = if (sequenceRunning) nextSequenceSlide(current, currentSlides, currentSettings.loop, currentBlocked)?.id
+                else current.autoTargetId.takeIf { current.autoEnabled }
+            if (sequenceRunning || target != null) {
+                delay((slideSeconds(currentSettings, current) * 1000).toLong())
+                // A manual exit also invalidates a pending end-of-sequence timer.
+                if (!gate.available(token) || exit != null) return@LaunchedEffect
+                if (target == null) { sequenceRunning = false; timersStopped = true }
+                else if (target in currentBlocked) { if (gate.available(token) && exit == null) blockedNotice = true }
+                else if (gate.take(token)) exit = Exit(current, target, effectiveTransition(currentSettings, current))
+            }
         }
     }
-    LaunchedEffect(exit) {
+    LaunchedEffect(exit, active) {
+        if (!active) return@LaunchedEffect
         val action = exit ?: return@LaunchedEffect
         action.outgoing=prepareSlideVisuals(action.from,elements)
         action.incoming=slides.find {it.id==action.to}?.let {prepareSlideVisuals(it,elements)} ?: emptyMap()
+        if (!action.ready) action.progress.snapTo(0f)
         action.ready=true // progress already zero: there is no intermediate progress=1 frame.
-        currentNavigate(action.to)
+        if (action.effect.darkEffect() && action.progress.value < .5f) {
+            action.progress.animateTo(.5f, tween((action.effect.duration * (.5f - action.progress.value)).toInt()))
+        }
+        if (currentSlide?.id != action.to) currentNavigate(action.to)
         // Wait until the destination has actually reached composition, before timing the transition.
         snapshotFlow {currentSlide?.id}.first {it==action.to}
         withFrameNanos { }
-        action.progress.animateTo(1f, tween(action.effect.duration))
+        action.progress.animateTo(1f, tween(if (action.effect.darkEffect()) (action.effect.duration * (1f - action.progress.value)).toInt() else action.effect.duration))
         retained=action.incoming
         exit = null; entry++ // Also starts a fresh visit for a self-link.
     }
@@ -98,6 +117,7 @@ fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier
                 preview = action != null || !active, onAction = request)
         }
         }
+        if (action?.effect?.darkEffect() == true) DarkTransitionCover(action.effect, action.progress.value)
         }
         Row(Modifier.align(Alignment.TopCenter).fillMaxWidth().background(Color(0xAA202026)),verticalAlignment=Alignment.CenterVertically) {
             TextButton(onClick=leave,modifier=Modifier.weight(.45f)) {Text("Salir de reproducción",color=Color.White,style=androidx.compose.material3.MaterialTheme.typography.labelMedium)}
@@ -106,11 +126,21 @@ fun Player(slide: Slide?, elements: List<Element>, modifier: Modifier = Modifier
                 if(showName && slide!=null) Text("Lámina ${slides.indexOfFirst {it.id==slide.id}+1} · ${slide.name}",Modifier.padding(4.dp),color=Color.White,style=androidx.compose.material3.MaterialTheme.typography.labelSmall,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
         }
+        if (sequenceRunning || slide?.autoEnabled == true || projectPlayback.sequenceEnabled) {
+            TextButton(onClick = {
+                if (sequenceRunning || !timersStopped && slide?.autoEnabled == true) {
+                    sequenceRunning = false; timersStopped = true
+                } else { sequenceRunning = projectPlayback.sequenceEnabled; timersStopped = false; entry++ }
+            }, enabled = sequenceRunning || !timersStopped && slide?.autoEnabled == true || exit == null, modifier = Modifier.align(Alignment.BottomCenter).background(Color(0xAA202026))) {
+                Text(if (sequenceRunning || !timersStopped && slide?.autoEnabled == true) "Detener secuencia" else "Reanudar secuencia", color = Color.White)
+            }
+        }
         if(blockedNotice) androidx.compose.material3.AlertDialog(onDismissRequest={blockedNotice=false},title={Text("Destino en borrador")},text={Text("Esta acción apunta a una lámina omitida. Permaneces en la escena actual; puedes usar otra acción o salir de reproducción. No se eligió una ruta alternativa.")},confirmButton={TextButton(onClick={blockedNotice=false}){Text("Permanecer aquí")}},dismissButton={TextButton(onClick=leave){Text("Salir de reproducción")}})
     }
 }
 private fun Modifier.transitionLayer(effect: Transition, progress: Float, incoming: Boolean, width: Float): Modifier = graphicsLayer {
     when (effect.type) {
+        "black", "shadows" -> alpha = if (incoming == darkIncomingVisible(progress)) 1f else 0f
         "fade" -> alpha = if (incoming) progress else 1f
         "left", "right" -> translationX = (if (effect.type == "left") -1 else 1) * width * (if (incoming) progress - 1 else progress)
     }
@@ -123,6 +153,26 @@ fun TransitionPreview(effect: Transition) {
     BoxWithConstraints(Modifier.fillMaxWidth().height(100.dp).clipToBounds().background(Color.Black)) {
         Box(Modifier.fillMaxSize().transitionLayer(effect, progress.value, false, constraints.maxWidth.toFloat()).background(Color(0xFF263238)), contentAlignment = Alignment.Center) { Text("A", color = Color.White) }
         Box(Modifier.fillMaxSize().transitionLayer(effect, progress.value, true, constraints.maxWidth.toFloat()).background(Color(0xFF6750A4)), contentAlignment = Alignment.Center) { Text("B", color = Color.White) }
+        if (effect.darkEffect()) DarkTransitionCover(effect, progress.value)
     }
     TextButton(onClick = { replay++ }) { Text("Probar transición") }
+}
+
+/** The same overlay covers the player and its preview; at midpoint it is fully opaque. */
+@Composable
+private fun DarkTransitionCover(effect: Transition, progress: Float) {
+    Canvas(Modifier.fillMaxSize()) {
+        val coverage = darkCoverage(progress)
+        // One opaque rectangle avoids a subpixel seam where opposing shadows meet.
+        if (coverage == 1f) drawRect(Color.Black)
+        else if (effect.type == "black") drawRect(Color.Black.copy(alpha = coverage))
+        else {
+            val x = size.width * coverage / 2f
+            val y = size.height * coverage / 2f
+            drawRect(Color.Black, size = Size(size.width, y))
+            drawRect(Color.Black, topLeft = Offset(0f, size.height - y), size = Size(size.width, y))
+            drawRect(Color.Black, topLeft = Offset(0f, y), size = Size(x, size.height - 2f * y))
+            drawRect(Color.Black, topLeft = Offset(size.width - x, y), size = Size(x, size.height - 2f * y))
+        }
+    }
 }

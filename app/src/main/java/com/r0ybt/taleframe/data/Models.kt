@@ -1,6 +1,6 @@
 package com.r0ybt.taleframe.data
 
-data class Project(val id: Long, val name: String, val coverResourceId: Long? = null, val initialSlideId: Long? = null, val skipDrafts: Boolean = false, val automaticBaseNavigation: Boolean = false)
+data class Project(val id: Long, val name: String, val coverResourceId: Long? = null, val initialSlideId: Long? = null, val skipDrafts: Boolean = false, val automaticBaseNavigation: Boolean = false, val coverScale: Float = 1f, val coverX: Float = 0f, val coverY: Float = 0f, val playback: ProjectPlayback = ProjectPlayback())
 data class Slide(
     val id: Long, val projectId: Long, val name: String, val color: Int = -1,
     val image: String? = null, val order: Int = 0,
@@ -11,7 +11,8 @@ data class Slide(
     val audioLoop: Boolean = true, val audioVolume: Float = 1f, val audioRevision: Long = 0,
     val autoEnabled: Boolean = false, val autoSeconds: Float = 5f,
     val autoTargetId: Long? = null, val transition: Transition = Transition(),
-    val backgroundResourceId: Long? = null, val audioResourceId: Long? = null, val draft: Boolean = false
+    val backgroundResourceId: Long? = null, val audioResourceId: Long? = null, val draft: Boolean = false, val useDefaultTransition: Boolean = false, val useDefaultSequenceTime: Boolean = false,
+    val narrativeScript: String? = null
 )
 
 // Legacy x/y are normalized over available travel, preserving existing compositions.
@@ -27,7 +28,7 @@ data class Element(
     val media: MediaOptions = MediaOptions(), val transition: Transition = Transition(),
     val style: VisualStyle = VisualStyle(), val speakerName: String = "", val sourceName: String = "",
     val resourceId: Long? = null, val characterId: Long? = null, val expressionId: Long? = null, val presetId: Long? = null,
-    val freePosition: Boolean = false, val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null, val baseNavigation: String? = null
+    val freePosition: Boolean = false, val expressionFrames: List<Long> = emptyList(), val panel: PanelOptions? = null, val baseNavigation: String? = null, val allowOverflow: Boolean? = null, val useDefaultTransition: Boolean = false
 )
 data class Story(val projects: List<Project> = emptyList(), val slides: List<Slide> = emptyList(), val elements: List<Element> = emptyList(),
     val resources: List<Resource> = emptyList(), val characters: List<Character> = emptyList(),
@@ -36,9 +37,13 @@ fun boundedPosition(value: Float): Float = boundedValue(value, 0f, 1f, 0f)
 fun boundedValue(value: Float, min: Float, max: Float, fallback: Float): Float =
     if (value.isFinite()) value.coerceIn(min, max) else fallback
 
-/** Free framing applies only to standalone images/GIF, preserving panels and characters. */
+/** Null preserves legacy image/GIF framing; old videos remain bounded until enabled. */
+val Element.supportsCornerResize: Boolean
+    get() = kind == "image" && panel == null && characterId == null && media.type in listOf("image", "gif", "video")
+val Element.permitsOverflow: Boolean
+    get() = supportsCornerResize && (allowOverflow ?: (media.type in listOf("image", "gif")))
 val Element.supportsFreePlacement: Boolean
-    get() = kind == "image" && panel == null && characterId == null && media.type in listOf("image", "gif")
+    get() = permitsOverflow
 fun finitePosition(value: Float): Float = if (value.isFinite()) value else 0f
 fun Element.storedPosition(value: Float): Float = if (supportsFreePlacement) finitePosition(value) else boundedPosition(value)
 fun Element.storedSize(value: Float, minimum: Float = 0f, fallback: Float = 0f): Float =

@@ -69,6 +69,10 @@ fun SlideCanvas(
             val pending = backgroundDraft
             if (pending != null && (slide.backgroundLocked || (slide.backgroundX == pending.backgroundX && slide.backgroundY == pending.backgroundY))) backgroundDraft = null
         }
+        val mediaAspects = elements.filter { it.supportsCornerResize }.associate { e ->
+            key(e.id) { e.id to localMediaAspect(e.image, e.media.type) }
+        }
+        val currentMediaAspects by rememberUpdatedState(mediaAspects)
         val currentElements by rememberUpdatedState(elements)
         val currentSlide by rememberUpdatedState(slide)
         val select by rememberUpdatedState(onSelect)
@@ -93,22 +97,38 @@ fun SlideCanvas(
                 val ordered = currentElements.map { draft?.takeIf { d -> d.id == it.id } ?: it }.sortedWith(compareBy<Element> { it.layer }.thenBy { it.id })
                 fun bounds(e: Element): ElementBounds {
                     val size = measured[e.id] ?: IntSize((stage.width * .3f).toInt(), (stage.height * .12f).toInt())
-                    return elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), size.width.toFloat(), size.height.toFloat())
+                    val b = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), size.width.toFloat(), size.height.toFloat())
+                    return if (e.supportsCornerResize) fittedMediaBounds(b, currentMediaAspects[e.id]) else b
                 }
                 val selected = ordered.find { it.id == currentSelection }
                 val selectedBounds = selected?.let(::bounds)
-                val handlePosition = selectedBounds?.let { b ->
-                    if (selected?.supportsFreePlacement == true) resizeHandle(b,stage.width.toFloat(),stage.height.toFloat(),with(density) {12.dp.toPx()})
-                    else Offset(b.left+b.width,b.top+b.height)
-                }
-                val handle = selected != null && !selected.locked && selectedBounds != null && (selected.baseNavigation!=null || (selectedBounds.width >= touchSize && selectedBounds.height >= touchSize)) &&
-                    (down.position - requireNotNull(handlePosition)).getDistance() < (if(selected.baseNavigation!=null) minOf(handleRadius,selectedBounds.width/3f) else handleRadius) && selected.rotation == 0f
-                val offstageMove = selected?.supportsFreePlacement == true && selected.rotation==0f &&
+                val corner = if (selected?.supportsCornerResize == true && !selected.locked && selectedBounds != null) {
+                    ResizeCorner.entries.minByOrNull { candidate ->
+                        (down.position - resizeCornerHandle(selectedBounds, selected.rotation, candidate,
+                            stage.width.toFloat(), stage.height.toFloat(), with(density) { 12.dp.toPx() })).getDistance()
+                    }?.takeIf { candidate ->
+                        (down.position - resizeCornerHandle(selectedBounds, selected.rotation, candidate,
+                            stage.width.toFloat(), stage.height.toFloat(), with(density) { 12.dp.toPx() })).getDistance() < handleRadius &&
+                            !((selectedBounds.width < touchSize || selectedBounds.height < touchSize) &&
+                                (down.position - Offset(selectedBounds.left + selectedBounds.width / 2, selectedBounds.top + selectedBounds.height / 2)).getDistance() <
+                                minOf(selectedBounds.width, selectedBounds.height) * .2f)
+                    }
+                } else null
+                val handle = corner != null || (selected != null && !selected.supportsCornerResize && !selected.locked && selectedBounds != null &&
+                    (selected.baseNavigation != null || (selectedBounds.width >= touchSize && selectedBounds.height >= touchSize)) &&
+                    (down.position - Offset(selectedBounds.left + selectedBounds.width, selectedBounds.top + selectedBounds.height)).getDistance() <
+                    (if (selected.baseNavigation != null) minOf(handleRadius, selectedBounds.width / 3f) else handleRadius) && selected.rotation == 0f)
+                val offstageMove = selected?.supportsFreePlacement == true &&
                     selectedBounds?.intersectsStage(stage.width.toFloat(),stage.height.toFloat()) == false &&
                     (down.position-Offset(stage.width/2f,stage.height/2f)).getDistance()<handleRadius
                 val hit = if (handle || offstageMove) selected else ordered.asReversed().firstOrNull { bounds(it).contains(down.position.x, down.position.y, it.rotation, 0f) }
                     ?: ordered.asReversed().firstOrNull { bounds(it).contains(down.position.x, down.position.y, it.rotation, touchSize) }
                 val startBounds = hit?.let(::bounds)
+                // Translation uses the stored frame so the Fit inset is not applied twice.
+                val startStoredBounds = hit?.let { e ->
+                    val size = measured[e.id] ?: IntSize((stage.width * .3f).toInt(), (stage.height * .12f).toInt())
+                    elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), size.width.toFloat(), size.height.toFloat())
+                }
                 val adjustBackground = backgroundMode && currentSlide.image != null && currentSlide.backgroundMode == "manual" && !currentSlide.backgroundLocked
                 if (!adjustBackground) select(hit)
                 down.consume()
@@ -144,9 +164,11 @@ fun SlideCanvas(
                                 backgroundDraft = changedBackground
                             } else if (hit != null && !hit.locked) {
                                 val b = requireNotNull(startBounds)
-                                changed = if (hit.supportsFreePlacement) {
+                                changed = if (corner != null && handle && hit.supportsCornerResize) {
+                                    resizeElementCorner(hit, b, stage.width.toFloat(), stage.height.toFloat(), accumulated, corner)
+                                } else if (hit.supportsFreePlacement) {
                                     if (handle) resizeFreeElement(hit,b,stage.width.toFloat(),stage.height.toFloat(),accumulated)
-                                    else moveFreeElement(hit,b,stage.width.toFloat(),stage.height.toFloat(),accumulated)
+                                    else moveFreeElement(hit,requireNotNull(startStoredBounds),stage.width.toFloat(),stage.height.toFloat(),accumulated)
                                 } else if (handle) {
                                     val newWidth = boundedValue((b.width + accumulated.x) / stage.width.coerceAtLeast(1), .05f, 1f, .3f)
                                     val newHeight = boundedValue((b.height + accumulated.y) / stage.height.coerceAtLeast(1), .04f, 1f, .15f)
@@ -154,8 +176,8 @@ fun SlideCanvas(
                                         x = boundedPosition(b.left / (stage.width * (1f - newWidth)).coerceAtLeast(1f)),
                                         y = boundedPosition(b.top / (stage.height * (1f - newHeight)).coerceAtLeast(1f)))
                                 }
-                                else hit.copy(x = boundedPosition(hit.x + accumulated.x / (stage.width - b.width).coerceAtLeast(1f)),
-                                    y = boundedPosition(hit.y + accumulated.y / (stage.height - b.height).coerceAtLeast(1f)))
+                                else hit.copy(x = boundedPosition(hit.x + accumulated.x / (stage.width - requireNotNull(startStoredBounds).width).coerceAtLeast(1f)),
+                                    y = boundedPosition(hit.y + accumulated.y / (stage.height - requireNotNull(startStoredBounds).height).coerceAtLeast(1f)))
                                 draft = changed
                             }
                         }
@@ -189,20 +211,28 @@ fun SlideCanvas(
             Box(Modifier.fillMaxSize().graphicsLayer { alpha = if (editing && reference != null) 1f - referenceOpacity.coerceIn(0f, .9f) else 1f }) {
                 Composition(backgroundDraft ?: slide, elements, stage, measured, draft, editing, selectedId, showActions, destinations, preview, onNavigate, onAction) { id, size -> measured[id] = size }
             }
-            val handleElement = (draft ?: elements.find {it.id==selectedId})?.takeIf {it.id==selectedId && it.supportsFreePlacement && it.rotation==0f}
+            val handleElement = (draft ?: elements.find {it.id==selectedId})?.takeIf {it.id==selectedId && it.supportsCornerResize}
             handleElement?.let {e ->
                 val m=measured[e.id] ?: IntSize.Zero
-                val b=elementBounds(e,stage.width.toFloat(),stage.height.toFloat(),m.width.toFloat(),m.height.toFloat())
+                val storedBounds=elementBounds(e,stage.width.toFloat(),stage.height.toFloat(),m.width.toFloat(),m.height.toFloat())
+                val b=fittedMediaBounds(storedBounds,mediaAspects[e.id])
                 if(editing && !b.intersectsStage(stage.width.toFloat(),stage.height.toFloat())) {
                     Box(Modifier.align(Alignment.Center).size(24.dp).background(MaterialTheme.colorScheme.primaryContainer)
                         .testTag("offstage-move-${e.id}"),contentAlignment=Alignment.Center) {
                         Text(if(e.locked) "🔒" else "↔",modifier=Modifier.semantics {contentDescription="Mover elemento fuera de la tarjeta"})
                     }
                 }
-                if(!e.locked && b.width>=touchSize && b.height>=touchSize) {
-                    val center=resizeHandle(b,stage.width.toFloat(),stage.height.toFloat(),with(density) {12.dp.toPx()})
-                    if(editing) Box(Modifier.offset {IntOffset((center.x-with(density) {6.dp.toPx()}).roundToInt(),(center.y-with(density) {6.dp.toPx()}).roundToInt())}
-                        .size(12.dp).background(MaterialTheme.colorScheme.primary).testTag("resize-handle-${e.id}"))
+                if (editing && !e.locked && b.width > 0f && b.height > 0f) {
+                    ResizeCorner.entries.forEach { corner ->
+                        val center = resizeCornerHandle(b, e.rotation, corner, stage.width.toFloat(), stage.height.toFloat(), with(density) { 12.dp.toPx() })
+                        Box(Modifier.offset { IntOffset((center.x - with(density) { 6.dp.toPx() }).roundToInt(), (center.y - with(density) { 6.dp.toPx() }).roundToInt()) }
+                            .size(12.dp).background(MaterialTheme.colorScheme.primary)
+                            .testTag(if (corner == ResizeCorner.BottomRight) "resize-handle-${e.id}" else "resize-handle-${e.id}-${corner.name}")
+                            .semantics { contentDescription = "Redimensionar: ${when(corner) {
+                                ResizeCorner.TopLeft -> "superior izquierda"; ResizeCorner.TopRight -> "superior derecha"
+                                ResizeCorner.BottomLeft -> "inferior izquierda"; ResizeCorner.BottomRight -> "inferior derecha"
+                            }}" })
+                    }
                 }
             }
             if(editing && positionIndicator!=null) Text(positionIndicator,Modifier.align(Alignment.TopCenter).background(MaterialTheme.colorScheme.surfaceContainerHigh).padding(8.dp),style=MaterialTheme.typography.labelMedium)
@@ -257,7 +287,7 @@ private fun Composition(
         elements.sortedWith(compareBy<Element> { it.layer }.thenBy { it.id }).forEach { original -> key(original.id) {
             val e = draft?.takeIf { it.id == original.id }
                 ?: if(original.id==resizePeer) original.copy(width=resizingBase.width,height=resizingBase.height) else original
-            ElementVisual(e, stage, measured[e.id] ?: IntSize.Zero, editing, selectedId == e.id, preview, { target -> if (action != null) action(target, e.transition) else navigate(target) }) { measure(e.id, it) }
+            ElementVisual(e, stage, measured[e.id] ?: IntSize.Zero, editing, selectedId == e.id, preview, { target -> if (action != null) action(target, if (e.useDefaultTransition) Transition("default") else e.transition) else navigate(target) }) { measure(e.id, it) }
             if (editing && showActions && e.kind == "button") {
                 val size = measured[e.id] ?: IntSize.Zero
                 val b = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), size.width.toFloat(), size.height.toFloat())
@@ -273,8 +303,10 @@ private fun Composition(
 private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing: Boolean, selected: Boolean, preview: Boolean,
     navigate: (Long) -> Unit, onMeasure: (IntSize) -> Unit) {
     val density = LocalDensity.current
-    val b = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), measured.width.toFloat(), measured.height.toFloat())
-    val dimensions = if (e.width > 0 && e.height > 0) with(density) { Modifier.wrapContentSize(Alignment.TopStart, unbounded = e.supportsFreePlacement).size((stage.width * e.width).toDp(), (stage.height * e.height).toDp()) }
+    val aspect = if (e.supportsCornerResize) localMediaAspect(e.image, e.media.type) else null
+    val storedBounds = elementBounds(e, stage.width.toFloat(), stage.height.toFloat(), measured.width.toFloat(), measured.height.toFloat())
+    val b = if (e.supportsCornerResize) fittedMediaBounds(storedBounds, aspect) else storedBounds
+    val dimensions = if (e.width > 0 && e.height > 0) with(density) { Modifier.wrapContentSize(Alignment.TopStart, unbounded = e.supportsFreePlacement).size(b.width.toDp(), b.height.toDp()) }
         else with(density) { Modifier.widthIn(max = (stage.width * .8f).toDp()).heightIn(max = stage.height.toDp()) }
     val padding = with(density) { (stage.width * .025f).toDp() }
     val font = with(density) { (stage.width * .045f).toSp() }
@@ -299,7 +331,7 @@ private fun ElementVisual(e: Element, stage: IntSize, measured: IntSize, editing
         }
         if(e.kind=="button" && e.style.buttonEffect=="glow") Box(Modifier.matchParentSize().border(3.dp,Color(e.textColor).copy(alpha=.25f*e.opacity),RoundedCornerShape(12.dp)))
         if(selected && editing && e.locked) Text("🔒",color=MaterialTheme.colorScheme.onTertiaryContainer,modifier=Modifier.align(Alignment.TopEnd).background(MaterialTheme.colorScheme.tertiaryContainer))
-        if (selected && editing && !e.supportsFreePlacement && !e.locked && e.rotation == 0f && (e.baseNavigation!=null || (b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }))) {
+        if (selected && editing && !e.supportsCornerResize && !e.locked && e.rotation == 0f && (e.baseNavigation!=null || (b.width >= with(density) { 48.dp.toPx() } && b.height >= with(density) { 48.dp.toPx() }))) {
             Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(accent))
         }
     }

@@ -3,6 +3,9 @@ package com.r0ybt.taleframe.state
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.r0ybt.taleframe.data.Story
+import com.r0ybt.taleframe.data.QuickScriptState
+import com.r0ybt.taleframe.data.QuickScriptStore
+import com.r0ybt.taleframe.data.ScriptInsertionPoint
 import com.r0ybt.taleframe.data.ProjectBackup
 import android.net.Uri
 import com.r0ybt.taleframe.data.StoryRepository
@@ -28,6 +31,55 @@ class StoryViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableReady = MutableStateFlow(false)
     val ready = mutableReady.asStateFlow()
     private val edits = Channel<StoryRepository.() -> Unit>(Channel.UNLIMITED)
+
+    private val mutableQuickScript = MutableStateFlow<QuickScriptState?>(null)
+    val quickScript = mutableQuickScript.asStateFlow()
+    private val mutableQuickBusy = MutableStateFlow(false)
+    val quickBusy = mutableQuickBusy.asStateFlow()
+    private val quickInputLock = Any()
+    private val pendingQuickInputs = mutableMapOf<Long, String>()
+    private val queuedQuickInputs = mutableSetOf<Long>()
+
+    fun openQuickScript(projectId: Long) {
+        mutableQuickScript.value = null
+        mutableQuickBusy.value = true
+        // Queue directly: Guion rápido does not enter the editor's element Undo.
+        edits.trySend {
+            try { mutableQuickScript.value = quickScripts.read(projectId) }
+            finally { mutableQuickBusy.value = false }
+        }
+    }
+
+    fun saveQuickScriptInput(projectId: Long, text: String) {
+        val enqueue = synchronized(quickInputLock) {
+            pendingQuickInputs[projectId] = text
+            queuedQuickInputs.add(projectId)
+        }
+        if (!enqueue) return
+        edits.trySend {
+            val latest = synchronized(quickInputLock) {
+                queuedQuickInputs.remove(projectId)
+                pendingQuickInputs.remove(projectId)
+            }
+            if (latest != null) quickScripts.saveInput(projectId, latest)
+        }
+    }
+
+    fun addQuickScriptText(projectId: Long, text: String) = quickAction(projectId) { addText(projectId, text) }
+    fun createQuickScriptSlide(projectId: Long, draftId: Long, start: Int, end: Int, insertion: ScriptInsertionPoint = ScriptInsertionPoint()) =
+        quickAction(projectId) { createSlide(projectId, draftId, start, end, insertion) }
+    fun undoQuickScript(projectId: Long) = quickAction(projectId) { undo(projectId) }
+
+    private fun quickAction(projectId: Long, action: QuickScriptStore.() -> Unit) {
+        if (mutableQuickBusy.value) return
+        mutableQuickBusy.value = true
+        edits.trySend {
+            try {
+                quickScripts.action()
+                mutableQuickScript.value = quickScripts.read(projectId)
+            } finally { mutableQuickBusy.value = false }
+        }
+    }
 
     data class BackupState(val progress: String? = null, val copyName: String? = null, val exported: Uri? = null, val imported: Long? = null)
     private val mutableBackup = MutableStateFlow(BackupState())
